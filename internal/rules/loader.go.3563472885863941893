@@ -1,0 +1,466 @@
+// Package rules handles loading, validation, and management of cleaning rules
+// from the JSON configuration file.
+package rules
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"gocleaner/internal/model"
+)
+
+// ── Allowed values ─────────────────────────────────────────────────────
+
+// validCategories is the set of allowed rule categories.
+var validCategories = map[string]bool{
+	model.CategorySystem:   true,
+	model.CategorySoftware: true,
+	model.CategoryPrivacy:  true,
+	model.CategoryPlugin:   true,
+}
+
+// forbiddenFileNames lists file / directory names that must never be
+// targeted by any rule. These are browser-sensitive data files that
+// contain passwords, cookies, or browsing history.
+//
+// Checked against both pattern basenames AND the leaf segment of every
+// path (with wildcards stripped first).
+var forbiddenFileNames = map[string]bool{
+	"history":      true,
+	"cookies":      true,
+	"login data":   true,
+	"web data":     true,
+	"preferences":  true,
+	"favicons":     true,
+	"shortcuts":    true,
+	"top sites":    true,
+	"network":      true,
+	"bookmarks":    true,
+	"extensions":   true,
+	"places":       true,
+	"logins":       true,
+	"key4":         true,
+	"prefs":        true,
+	"formhistory":  true,
+	"permissions":  true,
+	"handlers":     true,
+	"sessionstore": true,
+	"storage":      true,
+}
+
+// browserSafeLeaves lists the ONLY directory names that a rule is allowed
+// to target under a browser User Data profile path. Any other leaf is
+// rejected as potentially accessing sensitive browser data.
+var browserSafeLeaves = map[string]bool{
+	"cache":        true,
+	"code cache":   true,
+	"gpucache":     true,
+	"shadercache":  true,
+	"cache_data":   true, // Chrome Cache subdirectory
+	"cache2":       true, // Firefox cache directory
+	"entries":      true, // Firefox cache2 subdirectory
+}
+
+// browserProfileMarkers indicate paths that enter browser user-profile data.
+var browserProfileMarkers = []string{
+	`User Data`,
+	`Mozilla\Firefox\Profiles`,
+	`Firefox\Profiles`,
+}
+
+// forbiddenPathPrefixes lists system directory prefixes that must never
+// appear as a scan target.
+var forbiddenPathPrefixes = []string{
+	`C:\Windows\System32`,
+	`C:\Windows\SysWOW64`,
+	`C:\Windows\Boot`,
+	`C:\Windows\Installer`,
+	`C:\Program Files`,
+	`C:\Program Files (x86)`,
+}
+
+// protectedIMRoots lists IM (QQ/微信) account-root directory names.
+// A scan path that contains one of these inside the IM data tree is
+// rejected unless the leaf is an explicitly-allowed safe subdirectory
+// (log, cache, temp).
+var protectedIMRoots = []string{
+	`Tencent Files`,
+	`WeChat Files`,
+}
+
+// protectedIMDirs lists IM subdirectories that must never be scanned.
+// These hold chat records, images, files, videos, and databases.
+var protectedIMDirs = map[string]bool{
+	"audio":    true,
+	"image":    true,
+	"file":     true,
+	"video":    true,
+	"msg":      true,
+	"filerecv": true,
+	"pic":      true,
+}
+
+// imSafeLeaves are the ONLY leaf directories under an IM data path that
+// are explicitly safe to scan. Anything else triggers a fatal error.
+var imSafeLeaves = map[string]bool{
+	"log":   true,
+	"logs":  true,
+	"cache": true,
+	"temp":  true,
+}
+
+// ── Glob validation ────────────────────────────────────────────────────
+
+var validGlobPatternRe = regexp.MustCompile(`^[\w.*?[\]{}\-!]*$`)
+
+func hasUnmatchedBracket(pattern string) bool {
+	depth := 0
+	for _, ch := range pattern {
+		switch ch {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth < 0 {
+				return true
+			}
+		}
+	}
+	return depth != 0
+}
+
+// ── Error & result types ───────────────────────────────────────────────
+
+// LoadError represents an error encountered while loading or validating a single rule.
+type LoadError struct {
+	RuleIndex int    // Index in the JSON array (0-based)
+	RuleName  string // Name of the rule, if available
+	Message   string // Human-readable description of the problem
+}
+
+func (e *LoadError) Error() string {
+	if e.RuleName != "" {
+		return fmt.Sprintf("规则[%d] %q: %s", e.RuleIndex, e.RuleName, e.Message)
+	}
+	return fmt.Sprintf("规则[%d]: %s", e.RuleIndex, e.Message)
+}
+
+// LoadResult holds the outcome of loading rules from a configuration file.
+type LoadResult struct {
+	Rules    []model.CleanRule // Successfully loaded and validated rules
+	Errors   []*LoadError      // Fatal errors for rules that were skipped entirely
+	Warnings []*LoadError      // Advisory warnings (rule is still loaded)
+}
+
+// ── Public API ─────────────────────────────────────────────────────────
+
+// LoadFromFile reads and validates the JSON rule file at the given path.
+func LoadFromFile(path string) (*LoadResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取规则文件失败 %q: %w", path, err)
+	}
+	return LoadFromBytes(data)
+}
+
+// LoadFromBytes parses and validates rules from raw JSON bytes.
+func LoadFromBytes(data []byte) (*LoadResult, error) {
+	var rawRules []model.CleanRule
+	if err := json.Unmarshal(data, &rawRules); err != nil {
+		return nil, fmt.Errorf("解析规则 JSON 失败: %w", err)
+	}
+
+	if len(rawRules) == 0 {
+		return nil, fmt.Errorf("规则数据中没有定义任何规则")
+	}
+
+	result := &LoadResult{
+		Rules:    make([]model.CleanRule, 0, len(rawRules)),
+		Errors:   make([]*LoadError, 0),
+		Warnings: make([]*LoadError, 0),
+	}
+
+	for i := range rawRules {
+		rule := &rawRules[i]
+		errs, warns := validateRule(i, rule)
+
+		if len(errs) > 0 {
+			result.Errors = append(result.Errors, errs...)
+			result.Warnings = append(result.Warnings, warns...)
+			continue
+		}
+
+		result.Warnings = append(result.Warnings, warns...)
+
+		if rule.Risk == model.RiskHigh && rule.DefaultOn {
+			rule.DefaultOn = false
+		}
+
+		result.Rules = append(result.Rules, *rule)
+	}
+
+	return result, nil
+}
+
+// ── Validation ─────────────────────────────────────────────────────────
+
+func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnings []*LoadError) {
+	var errs []*LoadError
+	var warns []*LoadError
+
+	addErr := func(msg string) {
+		errs = append(errs, &LoadError{RuleIndex: index, RuleName: rule.Name, Message: msg})
+	}
+
+	addWarn := func(msg string) {
+		warns = append(warns, &LoadError{RuleIndex: index, RuleName: rule.Name, Message: msg})
+	}
+
+	// ── Required fields ────────────────────────────────────────────
+
+	if rule.Name == "" {
+		addErr("缺少必填字段 name")
+	}
+	if rule.Category == "" {
+		addErr("缺少必填字段 category")
+	} else if !validCategories[rule.Category] {
+		allowed := make([]string, 0, len(validCategories))
+		for k := range validCategories {
+			allowed = append(allowed, k)
+		}
+		addErr(fmt.Sprintf("无效的分类 %q，有效值为: %s", rule.Category, strings.Join(allowed, ", ")))
+	}
+	if len(rule.Paths) == 0 {
+		addErr("缺少必填字段 paths（至少需要一个路径）")
+	}
+	if rule.Risk == "" {
+		addErr("缺少必填字段 risk")
+	} else if !model.ValidRiskLevels[rule.Risk] {
+		addErr(fmt.Sprintf("无效的风险等级 %q，有效值为: low, medium, high", rule.Risk))
+	}
+
+	// ── Path entry checks ──────────────────────────────────────────
+
+	for pi, p := range rule.Paths {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			addErr(fmt.Sprintf("paths[%d] 为空字符串，拒绝以避免意外扫描当前目录", pi))
+			continue
+		}
+		if trimmed == "." || trimmed == ".." {
+			addErr(fmt.Sprintf("paths[%d] = %q，不允许使用相对路径引用当前或上级目录", pi, trimmed))
+			continue
+		}
+	}
+
+	// ── Forbidden system path prefix ───────────────────────────────
+
+	for _, p := range rule.Paths {
+		cleaned := filepath.Clean(p)
+		upper := strings.ToUpper(cleaned)
+		for _, forbidden := range forbiddenPathPrefixes {
+			if strings.HasPrefix(upper, strings.ToUpper(forbidden)) {
+				addErr(fmt.Sprintf("paths 中包含受保护的系统路径 %q，拒绝加载", p))
+				break
+			}
+		}
+	}
+
+	// ── Path leaf forbidden-name check ─────────────────────────────
+	//
+	// Strip wildcards out of the path, then check every remaining
+	// segment against forbiddenFileNames.  This catches rules like
+	//   ...\\User Data\\Default\\History  (patterns: [])
+	// even when the forbidden name is in the path itself, not in
+	// the patterns list.
+
+	for _, p := range rule.Paths {
+		// Replace glob tokens with placeholders so we can split on \
+		segments := splitPathSegments(p)
+		for _, seg := range segments {
+			if isForbiddenFileName(seg) {
+				addErr(fmt.Sprintf(
+					"路径 %q 的末段 %q 是受保护的浏览器隐私数据文件，拒绝加载。请将路径限制为 Cache / Code Cache / GPUCache / ShaderCache",
+					p, seg,
+				))
+			}
+		}
+	}
+
+	// ── Browser profile whitelist check ────────────────────────────
+	//
+	// If a path enters a Chrome/Edge/Firefox profile directory
+	// (contains "User Data"), the leaf directory must be one of the
+	// explicitly whitelisted safe cache directories.  This prevents
+	// rules from cleaning things like Login Data, History, etc.
+	// by targeting the profile root.
+
+	for _, p := range rule.Paths {
+		if !isBrowserProfilePath(p) {
+			continue
+		}
+		// Strip wildcards and get the last real segment
+		leaf := lastRealSegment(p)
+		if leaf == "" {
+			continue
+		}
+		if !browserSafeLeaves[normalizeName(leaf)] {
+			addErr(fmt.Sprintf(
+				"浏览器路径 %q 的目标目录 %q 不在白名单内。仅允许: Cache, Code Cache, GPUCache, ShaderCache",
+				p, leaf,
+			))
+		}
+	}
+
+	// ── IM (QQ/微信) protected path check ─────────────────────────
+	//
+	// Fatal if a path enters Tencent Files / WeChat Files and the
+	// leaf directory is NOT an explicitly-allowed safe dir (log, cache,
+	// temp).  Protected dirs like Audio, Image, File, Video, Msg are
+	// always fatal.
+
+	for _, p := range rule.Paths {
+		upper := strings.ToUpper(p)
+
+		// Check whether this path touches IM account data at all
+		insideIM := false
+		for _, root := range protectedIMRoots {
+			if strings.Contains(upper, strings.ToUpper(root)) {
+				insideIM = true
+				break
+			}
+		}
+		if !insideIM {
+			continue
+		}
+
+		// Check for structurally-protected subdirectories (Audio,
+		// Image, File, Video, Msg, FileRecv, Pic).  These are always
+		// fatal — they contain user content, not temporary/cache data.
+		segments := splitPathSegments(p)
+		for _, seg := range segments {
+			if protectedIMDirs[normalizeName(seg)] {
+				addErr(fmt.Sprintf(
+					"路径 %q 包含受保护的 IM 数据目录 %q（聊天记录/图片/文件/视频），拒绝加载",
+					p, seg,
+				))
+				break
+			}
+			// Also reject Msg*.db database files
+			if strings.HasPrefix(strings.ToUpper(seg), "MSG") &&
+				strings.HasSuffix(strings.ToLower(seg), ".db") {
+				addErr(fmt.Sprintf(
+					"路径 %q 包含受保护的 IM 数据库 %q，拒绝加载",
+					p, seg,
+				))
+				break
+			}
+		}
+
+		// If the rule uses patterns:[] (match everything), verify the
+		// leaf is an allowed safe directory.  If patterns are specified,
+		// the user has narrowed the scope — still warn.
+		leaf := lastRealSegment(p)
+		if leaf != "" && !imSafeLeaves[normalizeName(leaf)] {
+			// Patterns exist → warning (user may have narrowed scope)
+			// No patterns → fatal (would match everything)
+			if len(rule.Patterns) == 0 {
+				addErr(fmt.Sprintf(
+					"路径 %q 进入 IM 数据目录且 patterns 为空（将匹配所有文件）。仅允许扫描 log/cache/temp 子目录",
+					p,
+				))
+			} else {
+				addWarn(fmt.Sprintf(
+					"路径 %q 进入 IM 数据目录。请确认 patterns 和 exclude 已排除 Audio/Image/File/Video 目录及 Msg*.db 数据库",
+					p,
+				))
+			}
+		}
+	}
+
+	// ── Pattern-level forbidden file-name check ────────────────────
+
+	for _, pat := range rule.Patterns {
+		if isForbiddenFileName(filepath.Base(pat)) {
+			addErr(fmt.Sprintf("patterns 中包含受保护的目标 %q，该文件可能包含用户敏感数据", pat))
+		}
+	}
+
+	// ── Glob pattern syntax check ──────────────────────────────────
+
+	for pi, pat := range rule.Patterns {
+		if !validGlobPatternRe.MatchString(pat) {
+			addErr(fmt.Sprintf("patterns[%d] %q 包含非法字符，可能不是有效的 glob 模式", pi, pat))
+		}
+		if hasUnmatchedBracket(pat) {
+			addErr(fmt.Sprintf("patterns[%d] %q 方括号不匹配", pi, pat))
+		}
+	}
+
+	return errs, warns
+}
+
+// ── Path helpers ───────────────────────────────────────────────────────
+
+// splitPathSegments splits a path on \ and / delimiters, strips wildcard
+// tokens (*, ?), and returns the remaining concrete path segments.
+func splitPathSegments(path string) []string {
+	// Normalize separators
+	p := strings.ReplaceAll(path, "/", `\`)
+	raw := strings.Split(p, `\`)
+	var out []string
+	for _, s := range raw {
+		s = strings.TrimSpace(s)
+		// Skip env-var references (still contain %)
+		if strings.Contains(s, "%") {
+			continue
+		}
+		// Skip wildcard-only segments
+		if s == "" || s == "*" || s == "?" || strings.Count(s, "*") == len(s) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func normalizeName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func isForbiddenFileName(name string) bool {
+	normalized := normalizeName(name)
+	if forbiddenFileNames[normalized] {
+		return true
+	}
+
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	return forbiddenFileNames[normalizeName(base)]
+}
+
+func isBrowserProfilePath(path string) bool {
+	normalizedPath := normalizeName(strings.ReplaceAll(path, "/", `\`))
+	for _, marker := range browserProfileMarkers {
+		if strings.Contains(normalizedPath, normalizeName(strings.ReplaceAll(marker, "/", `\`))) {
+			return true
+		}
+	}
+	return false
+}
+
+// lastRealSegment returns the last non-wildcard, non-env-var segment of
+// the path.  For example:
+//
+//	%LOCALAPPDATA%\Google\Chrome\User Data\*\Cache → "Cache"
+//	C:\Users\*\AppData\Local\Temp                    → "Temp"
+func lastRealSegment(path string) string {
+	segs := splitPathSegments(path)
+	if len(segs) == 0 {
+		return ""
+	}
+	return segs[len(segs)-1]
+}

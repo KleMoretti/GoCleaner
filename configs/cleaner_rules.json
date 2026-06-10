@@ -1,0 +1,119 @@
+[
+  {
+    "name": "用户临时文件",
+    "category": "system",
+    "paths": ["%TEMP%"],
+    "patterns": ["*.tmp", "*.log", "*.dmp", "*.etl"],
+    "exclude": [],
+    "risk": "low",
+    "min_age_days": 0,
+    "default_on": true
+  },
+  {
+    "name": "应用本地临时文件",
+    "category": "system",
+    "paths": ["%LOCALAPPDATA%\\Temp"],
+    "patterns": ["*.tmp", "*.log"],
+    "exclude": [],
+    "risk": "low",
+    "min_age_days": 7,
+    "default_on": true
+  },
+  {
+    "name": "Chrome 浏览器缓存",
+    "category": "software",
+    "paths": [
+      "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache\\Cache_Data",
+      "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Code Cache",
+      "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\GPUCache",
+      "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\ShaderCache"
+    ],
+    "patterns": [],
+    "exclude": [],
+    "risk": "low",
+    "min_age_days": 0,
+    "default_on": true
+  },
+  {
+    "name": "Edge 浏览器缓存",
+    "category": "software",
+    "paths": [
+      "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache\\Cache_Data",
+      "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Code Cache",
+      "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\GPUCache",
+      "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\ShaderCache"
+    ],
+    "patterns": [],
+    "exclude": [],
+    "risk": "low",
+    "min_age_days": 0,
+    "default_on": true
+  },
+  {
+    "name": "Firefox 浏览器缓存",
+    "category": "software",
+    "paths": [
+      "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cache2"
+    ],
+    "patterns": [],
+    "exclude": [],
+    "risk": "low",
+    "min_age_days": 0,
+    "default_on": true
+  },
+  {
+    "name": "系统临时文件 (高风险)",
+    "category": "system",
+    "paths": ["C:\\Windows\\Temp"],
+    "patterns": ["*.tmp", "*.log", "*.dmp", "*.etl"],
+    "exclude": [],
+    "risk": "high",
+    "min_age_days": 7,
+    "default_on": false
+  },
+  {
+    "name": "Windows 日志文件 (高风险)",
+    "category": "system",
+    "paths": ["C:\\Windows\\Logs"],
+    "patterns": ["*.log", "*.etl"],
+    "exclude": [],
+    "risk": "high",
+    "min_age_days": 7,
+    "default_on": false
+  },
+  {
+    "name": "缩略图缓存",
+    "category": "privacy",
+    "paths": [
+      "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer"
+    ],
+    "patterns": ["thumbcache_*.db", "iconcache_*.db"],
+    "exclude": [],
+    "risk": "medium",
+    "min_age_days": 0,
+    "default_on": false
+  },
+  {
+    "name": "最近文档记录",
+    "category": "privacy",
+    "paths": ["%APPDATA%\\Microsoft\\Windows\\Recent"],
+    "patterns": ["*.lnk"],
+    "exclude": [],
+    "risk": "medium",
+    "min_age_days": 0,
+    "default_on": false
+  },
+  {
+    "name": "跳转列表 (JumpList)",
+    "category": "privacy",
+    "paths": [
+      "%APPDATA%\\Microsoft\\Windows\\Recent\\AutomaticDestinations",
+      "%APPDATA%\\Microsoft\\Windows\\Recent\\CustomDestinations"
+    ],
+    "patterns": ["*.automaticDestinations-ms", "*.customDestinations-ms"],
+    "exclude": [],
+    "risk": "medium",
+    "min_age_days": 0,
+    "default_on": false
+  }
+]
