@@ -10,6 +10,7 @@ import (
 
 	"gocleaner/internal/model"
 	"gocleaner/internal/rules"
+	"gocleaner/internal/scanner"
 	"gocleaner/internal/windows"
 )
 
@@ -57,8 +58,30 @@ func resolveRulesPath() string {
 }
 
 // =========================================================================
-// Placeholder API — to be extended in Days 5-7 with real scan functionality
+// Scan API — Day 5-7: full file-system scanning
 // =========================================================================
+
+// Scan loads all cleaning rules and executes a full file-system scan,
+// returning the complete scan result (items, totals, errors, duration).
+//
+// Rules are loaded from the on-disk config file (or embedded defaults).
+// The scanner expands environment variables, resolves glob wildcards,
+// walks directory trees, and applies pattern / exclude / age filters.
+//
+// High-risk items are never pre-selected, even if a rule has default_on=true.
+func (a *App) Scan() (*model.ScanResult, error) {
+	rulesList, err := a.GetRulesPreview()
+	if err != nil {
+		return nil, fmt.Errorf("加载规则失败: %w", err)
+	}
+
+	if len(rulesList) == 0 {
+		return nil, fmt.Errorf("没有可用的扫描规则")
+	}
+
+	result := scanner.Scan(rulesList)
+	return result, nil
+}
 
 // Ping is a health-check method to verify the Go backend is reachable.
 func (a *App) Ping() string {

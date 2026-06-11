@@ -24,6 +24,19 @@ export interface ScanItem {
   selected: boolean;
 }
 
+export interface ScanError {
+  path: string;
+  reason: string;
+}
+
+export interface ScanResult {
+  items: ScanItem[];
+  total_files: number;
+  total_size: number;
+  errors: ScanError[];
+  duration_ms: number;
+}
+
 export interface CleanResult {
   deleted_files: number;
   freed_size: number;

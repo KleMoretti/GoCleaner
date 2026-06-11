@@ -21,3 +21,7 @@ export function GetRulesWarnings() {
 export function Ping() {
   return window['go']['app']['App']['Ping']();
 }
+
+export function Scan() {
+  return window['go']['app']['App']['Scan']();
+}

@@ -11,3 +11,5 @@ export function GetRulesPreview():Promise<Array<model.CleanRule>>;
 export function GetRulesWarnings():Promise<Array<string>>;
 
 export function Ping():Promise<string>;
+
+export function Scan():Promise<model.ScanResult>;

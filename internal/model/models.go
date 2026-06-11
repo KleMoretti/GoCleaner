@@ -73,6 +73,21 @@ type ScanItem struct {
 	Selected     bool   `json:"selected"`      // Whether this item is currently selected for cleanup
 }
 
+// ScanError records a path that could not be scanned and the reason why.
+type ScanError struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// ScanResult holds the complete outcome of a scan operation.
+type ScanResult struct {
+	Items      []ScanItem  `json:"items"`       // All discovered scan items
+	TotalFiles int         `json:"total_files"` // Number of files found
+	TotalSize  int64       `json:"total_size"`  // Total bytes across all files
+	Errors     []ScanError `json:"errors"`      // Paths that failed during scanning
+	Duration   int64       `json:"duration_ms"` // Scan duration in milliseconds
+}
+
 // CleanResult summarizes the outcome of a cleaning operation.
 type CleanResult struct {
 	DeletedFiles  int               `json:"deleted_files"`  // Number of successfully deleted files
