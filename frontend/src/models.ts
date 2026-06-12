@@ -1,4 +1,5 @@
-// TypeScript models matching the Go backend data structures.
+export type RiskLevel = 'low' | 'medium' | 'high';
+export type ItemType = 'file' | 'directory' | 'registry' | 'plugin';
 
 export interface CleanRule {
   name: string;
@@ -6,7 +7,7 @@ export interface CleanRule {
   paths: string[];
   patterns: string[];
   exclude: string[];
-  risk: 'low' | 'medium' | 'high';
+  risk: RiskLevel;
   min_age_days: number;
   default_on: boolean;
 }
@@ -15,10 +16,10 @@ export interface ScanItem {
   id: string;
   path: string;
   name: string;
-  type: 'file' | 'directory' | 'registry' | 'plugin';
+  type: ItemType;
   category: string;
   size: number;
-  risk: 'low' | 'medium' | 'high';
+  risk: RiskLevel;
   source: string;
   last_modified: number;
   selected: boolean;
@@ -56,21 +57,21 @@ export interface OperationLog {
   duration: number;
 }
 
-export const RiskLabels: Record<string, string> = {
-  low: '低风险',
-  medium: '中风险',
-  high: '高风险',
+export const RiskLabels: Record<RiskLevel, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
 };
 
-export const RiskColors: Record<string, string> = {
-  low: '#52c41a',
-  medium: '#faad14',
-  high: '#f5222d',
+export const RiskColors: Record<RiskLevel, string> = {
+  low: '#2f9d58',
+  medium: '#b7791f',
+  high: '#d64545',
 };
 
 export const CategoryLabels: Record<string, string> = {
-  system: '系统垃圾',
-  software: '软件缓存',
-  privacy: '隐私痕迹',
-  plugin: '浏览器插件',
+  system: 'System',
+  software: 'Software',
+  privacy: 'Privacy',
+  plugin: 'Plugin',
 };

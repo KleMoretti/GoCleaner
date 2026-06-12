@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"gocleaner/internal/cleaner"
+	"gocleaner/internal/logger"
 	"gocleaner/internal/model"
 	"gocleaner/internal/rules"
 	"gocleaner/internal/scanner"
@@ -80,7 +83,38 @@ func (a *App) Scan() (*model.ScanResult, error) {
 	}
 
 	result := scanner.Scan(rulesList)
+	if err := appendScanLog(result); err != nil {
+		return result, fmt.Errorf("record scan operation log: %w", err)
+	}
 	return result, nil
+}
+
+// Clean executes deletion for frontend-selected scan items.
+func (a *App) Clean(items []model.ScanItem, highRiskConfirmed bool) (*model.CleanResult, error) {
+	start := time.Now()
+	result, cleanErr := cleaner.Clean(items, cleaner.Options{
+		HighRiskConfirmed: highRiskConfirmed,
+	})
+	if result == nil {
+		result = &model.CleanResult{
+			FailedFiles:   make([]string, 0),
+			FailedReasons: make(map[string]string),
+		}
+	}
+
+	if err := appendCleanLog(result, time.Since(start).Milliseconds()); err != nil {
+		if cleanErr != nil {
+			return result, fmt.Errorf("%w; record clean operation log: %v", cleanErr, err)
+		}
+		return result, fmt.Errorf("record clean operation log: %w", err)
+	}
+
+	return result, cleanErr
+}
+
+// GetOperationLogs returns the newest operation log entries first.
+func (a *App) GetOperationLogs(limit int) ([]model.OperationLog, error) {
+	return logger.New(logger.DefaultPath()).ReadRecent(limit)
 }
 
 // Ping is a health-check method to verify the Go backend is reachable.
@@ -171,4 +205,27 @@ func (a *App) GetRuleCategories() ([]string, error) {
 		}
 	}
 	return categories, nil
+}
+
+func appendScanLog(result *model.ScanResult) error {
+	entry := model.NewOperationLog(model.OpScan)
+	entry.ScannedFiles = result.TotalFiles
+	entry.Duration = result.Duration
+	for _, scanErr := range result.Errors {
+		entry.FailedPaths = append(entry.FailedPaths, scanErr.Path)
+		entry.FailedReasons = append(entry.FailedReasons, scanErr.Reason)
+	}
+	return logger.New(logger.DefaultPath()).Append(*entry)
+}
+
+func appendCleanLog(result *model.CleanResult, duration int64) error {
+	entry := model.NewOperationLog(model.OpClean)
+	entry.DeletedFiles = result.DeletedFiles
+	entry.FreedSize = result.FreedSize
+	entry.FailedPaths = append(entry.FailedPaths, result.FailedFiles...)
+	for _, path := range result.FailedFiles {
+		entry.FailedReasons = append(entry.FailedReasons, result.FailedReasons[path])
+	}
+	entry.Duration = duration
+	return logger.New(logger.DefaultPath()).Append(*entry)
 }

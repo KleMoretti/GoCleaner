@@ -1,5 +1,25 @@
 export namespace model {
-	
+
+	export class CleanResult {
+	    deleted_files: number;
+	    freed_size: number;
+	    failed_files: string[];
+	    failed_reasons: Record<string, string>;
+	    message: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CleanResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deleted_files = source["deleted_files"];
+	        this.freed_size = source["freed_size"];
+	        this.failed_files = source["failed_files"];
+	        this.failed_reasons = source["failed_reasons"];
+	        this.message = source["message"];
+	    }
+	}
 	export class CleanRule {
 	    name: string;
 	    category: string;
@@ -9,11 +29,11 @@ export namespace model {
 	    risk: string;
 	    min_age_days: number;
 	    default_on: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new CleanRule(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -24,6 +44,32 @@ export namespace model {
 	        this.risk = source["risk"];
 	        this.min_age_days = source["min_age_days"];
 	        this.default_on = source["default_on"];
+	    }
+	}
+	export class OperationLog {
+	    timestamp: string;
+	    operation: string;
+	    scanned_files: number;
+	    deleted_files: number;
+	    freed_size: number;
+	    failed_paths: string[];
+	    failed_reasons: string[];
+	    duration: number;
+
+	    static createFrom(source: any = {}) {
+	        return new OperationLog(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.timestamp = source["timestamp"];
+	        this.operation = source["operation"];
+	        this.scanned_files = source["scanned_files"];
+	        this.deleted_files = source["deleted_files"];
+	        this.freed_size = source["freed_size"];
+	        this.failed_paths = source["failed_paths"];
+	        this.failed_reasons = source["failed_reasons"];
+	        this.duration = source["duration"];
 	    }
 	}
 	export class ScanError {
