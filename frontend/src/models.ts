@@ -58,9 +58,9 @@ export interface OperationLog {
 }
 
 export const RiskLabels: Record<RiskLevel, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
+  low: '低风险',
+  medium: '中风险',
+  high: '高风险',
 };
 
 export const RiskColors: Record<RiskLevel, string> = {
@@ -70,8 +70,8 @@ export const RiskColors: Record<RiskLevel, string> = {
 };
 
 export const CategoryLabels: Record<string, string> = {
-  system: 'System',
-  software: 'Software',
-  privacy: 'Privacy',
-  plugin: 'Plugin',
+  system: '系统清理',
+  software: '软件缓存',
+  privacy: '隐私痕迹',
+  plugin: '插件扫描',
 };

@@ -197,7 +197,7 @@ button:disabled {
 
 .stats-bar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 
@@ -233,6 +233,15 @@ button:disabled {
 
 .stat-high .stat-value {
   color: #ff9a9a;
+}
+
+.stat-warning {
+  border-color: #715820;
+  background: #241f15;
+}
+
+.stat-warning .stat-value {
+  color: #ffd98a;
 }
 
 .env-strip {
@@ -332,7 +341,7 @@ button:disabled {
 }
 
 .compact-table {
-  min-width: 760px;
+  min-width: 920px;
 }
 
 .data-table th,
@@ -388,6 +397,34 @@ button:disabled {
   font-family: Consolas, Monaco, monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.log-failure-cell {
+  max-width: 360px;
+}
+
+.log-failure-cell summary {
+  cursor: pointer;
+  color: #f2d79a;
+  font-weight: 700;
+}
+
+.log-failure-cell ul {
+  margin: 8px 0 0;
+  padding-left: 16px;
+}
+
+.log-failure-cell li {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+
+.log-failure-cell code {
+  display: block;
+  margin-bottom: 3px;
+  color: #9ad8ff;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
 }
 
 .empty-row {

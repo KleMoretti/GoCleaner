@@ -21,6 +21,7 @@ go.work.sum
 # ── Build & Distribution ──────────────────────────────
 build/bin/
 dist/
+.tmp/
 
 # ── Frontend / Node ───────────────────────────────────
 frontend/dist/

@@ -14,6 +14,11 @@ import {
   RiskColors,
   RiskLabels,
 } from './models';
+import {
+  countFailures,
+  reconcileItemsAfterClean,
+  summarizeSelection,
+} from './summary';
 import type {
   CleanResult,
   CleanRule,
@@ -68,8 +73,27 @@ function riskLabel(risk: string): string {
   return RiskLabels[risk as RiskLevel] || risk || '-';
 }
 
+function operationLabel(operation: string): string {
+  const labels: Record<string, string> = {
+    scan: '扫描',
+    clean: '清理',
+    shred: '粉碎',
+    registry_backup: '注册表备份',
+    registry_delete: '注册表删除',
+  };
+  return labels[operation] || operation || '-';
+}
+
+function errorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("reading 'app'") || message.includes('window.go')) {
+    return '未检测到 Wails 后端绑定，请在 Wails 桌面运行环境中打开应用。';
+  }
+  return message;
+}
+
 function App() {
-  const [backendStatus, setBackendStatus] = useState('Checking...');
+  const [backendStatus, setBackendStatus] = useState('检查中...');
   const [rules, setRules] = useState<CleanRule[]>([]);
   const [ruleWarnings, setRuleWarnings] = useState<string[]>([]);
   const [envInfo, setEnvInfo] = useState<Record<string, string>>({});
@@ -95,8 +119,8 @@ function App() {
   async function loadInitialData() {
     try {
       setLoading(true);
-      const status = await Ping();
-      setBackendStatus(status);
+      await Ping();
+      setBackendStatus('后端已连接');
 
       const [rulesList, warnings, env] = await Promise.all([
         GetRulesPreview(),
@@ -110,8 +134,8 @@ function App() {
       await loadOperationLogs();
       setError(null);
     } catch (e: any) {
-      setError(e?.message || String(e));
-      setBackendStatus('Backend unavailable');
+      setError(errorMessage(e));
+      setBackendStatus('后端不可用');
     } finally {
       setLoading(false);
     }
@@ -126,7 +150,7 @@ function App() {
       await loadOperationLogs();
       setError(null);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setError(errorMessage(e));
     } finally {
       setScanning(false);
     }
@@ -161,13 +185,15 @@ function App() {
     });
   }, [scanItems, selectedCategory, selectedRisk]);
 
-  const selectedItems = useMemo(() => scanItems.filter((item) => item.selected), [scanItems]);
-  const selectedSize = selectedItems.reduce((total, item) => total + item.size, 0);
-  const selectedRiskCounts = riskOrder.reduce<Record<RiskLevel, number>>((counts, risk) => {
-    counts[risk] = selectedItems.filter((item) => item.risk === risk).length;
-    return counts;
-  }, { low: 0, medium: 0, high: 0 });
-  const hasHighRiskSelection = selectedRiskCounts.high > 0;
+  const selectionSummary = useMemo(() => summarizeSelection(scanItems), [scanItems]);
+  const selectedItems = selectionSummary.items;
+  const selectedSize = selectionSummary.size;
+  const selectedRiskCounts = selectionSummary.riskCounts;
+  const hasHighRiskSelection = selectionSummary.hasHighRisk;
+  const failureSummary = useMemo(
+    () => countFailures(scanResult, cleanResult),
+    [scanResult, cleanResult],
+  );
 
   function selectVisibleSafeItems() {
     const visibleSafeIds = new Set(
@@ -206,18 +232,16 @@ function App() {
     }
 
     const summary = [
-      `${selectedItems.length} item(s)`,
-      formatBytes(selectedSize),
-      `low ${selectedRiskCounts.low}`,
-      `medium ${selectedRiskCounts.medium}`,
-      `high ${selectedRiskCounts.high}`,
-    ].join(' | ');
+      `选中项：${selectedItems.length} 项`,
+      `预计释放：${formatBytes(selectedSize)}`,
+      `风险构成：低风险 ${selectedRiskCounts.low}，中风险 ${selectedRiskCounts.medium}，高风险 ${selectedRiskCounts.high}`,
+    ].join('\n');
 
-    if (!window.confirm(`Clean selected files?\n${summary}`)) {
+    if (!window.confirm(`确认清理选中文件？\n${summary}`)) {
       return;
     }
 
-    if (hasHighRiskSelection && !window.confirm('High-risk items are selected. Continue with high-risk cleaning?')) {
+    if (hasHighRiskSelection && !window.confirm('已选中高风险项目。系统目录或敏感路径可能需要管理员权限，且失败原因会记录到日志。确认继续清理？')) {
       return;
     }
 
@@ -227,17 +251,11 @@ function App() {
       const clean = result as unknown as CleanResult;
       setCleanResult(clean);
 
-      const failedPaths = new Set(clean.failed_files || []);
-      const selectedPaths = new Set(selectedItems.map((item) => item.path));
       setScanResult((current) => {
         if (!current) {
           return current;
         }
-        const items = current.items
-          .filter((item) => !(selectedPaths.has(item.path) && !failedPaths.has(item.path)))
-          .map((item) => (
-            failedPaths.has(item.path) ? { ...item, selected: false } : item
-          ));
+        const items = reconcileItemsAfterClean(current.items, selectedItems, clean);
         return {
           ...current,
           items,
@@ -249,7 +267,7 @@ function App() {
       await loadOperationLogs();
       setError(null);
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setError(errorMessage(e));
     } finally {
       setCleaning(false);
     }
@@ -267,13 +285,13 @@ function App() {
       <header className="app-header">
         <div className="brand-block">
           <h1>GoCleaner</h1>
-          <span className="subtitle">Windows cleanup workbench</span>
+          <span className="subtitle">Windows 空间清理工作台</span>
         </div>
         <span className={`status-badge ${error ? 'status-error' : 'status-ok'}`}>
           {backendStatus}
         </span>
         <button className="primary-action" onClick={runScan} disabled={loading || scanning || cleaning}>
-          {scanning ? 'Scanning...' : 'Scan'}
+          {scanning ? '扫描中...' : '开始扫描'}
         </button>
       </header>
 
@@ -281,40 +299,48 @@ function App() {
         {loading ? (
           <section className="state-panel">
             <div className="spinner" />
-            <span>Loading configuration</span>
+            <span>正在加载配置</span>
           </section>
         ) : (
           <>
             {error && (
-              <section className="error-panel">
-                <strong>Error</strong>
+              <section className="error-panel" role="alert">
+                <strong>错误</strong>
                 <span>{error}</span>
-                <button onClick={loadInitialData}>Retry</button>
+                <button onClick={loadInitialData}>重试</button>
               </section>
             )}
 
             <section className="stats-bar">
               <div className="stat-item">
                 <span className="stat-value">{scanResult ? scanResult.total_files : ruleStats.total}</span>
-                <span className="stat-label">{scanResult ? 'Scanned files' : 'Rules'}</span>
+                <span className="stat-label">{scanResult ? '扫描文件数' : '规则数量'}</span>
               </div>
               <div className="stat-item">
-                <span className="stat-value">{scanResult ? formatBytes(scanResult.total_size) : ruleStats.low}</span>
-                <span className="stat-label">{scanResult ? 'Detected size' : 'Low risk rules'}</span>
+                <span className="stat-value">{scanResult ? formatBytes(scanResult.total_size) : `${ruleStats.low}/${ruleStats.medium}/${ruleStats.high}`}</span>
+                <span className="stat-label">{scanResult ? '扫描总大小' : '低/中/高风险规则'}</span>
               </div>
               <div className="stat-item">
                 <span className="stat-value">{selectedItems.length}</span>
-                <span className="stat-label">Selected</span>
+                <span className="stat-label">已勾选项目</span>
+              </div>
+              <div className="stat-item">
+                <span className="stat-value">{formatBytes(selectedSize)}</span>
+                <span className="stat-label">已勾选大小</span>
+              </div>
+              <div className={`stat-item ${failureSummary.total > 0 ? 'stat-warning' : ''}`}>
+                <span className="stat-value">{failureSummary.total}</span>
+                <span className="stat-label">失败项（扫描 {failureSummary.scan} / 清理 {failureSummary.clean}）</span>
               </div>
               <div className={`stat-item ${hasHighRiskSelection ? 'stat-high' : ''}`}>
                 <span className="stat-value">{selectedRiskCounts.high}</span>
-                <span className="stat-label">High risk selected</span>
+                <span className="stat-label">已选高风险</span>
               </div>
             </section>
 
             {ruleWarnings.length > 0 && (
               <section className="notice-panel">
-                <strong>Rule warnings</strong>
+                <strong>规则警告</strong>
                 <ul>
                   {ruleWarnings.map((warning, idx) => (
                     <li key={idx}>{warning}</li>
@@ -340,7 +366,7 @@ function App() {
                     className={`filter-btn ${selectedCategory === category ? 'active' : ''}`}
                     onClick={() => setSelectedCategory(category)}
                   >
-                    {category === 'all' ? 'All categories' : categoryLabel(category)}
+                    {category === 'all' ? '全部分类' : categoryLabel(category)}
                   </button>
                 ))}
               </div>
@@ -351,28 +377,28 @@ function App() {
                     className={`filter-btn ${selectedRisk === risk ? 'active' : ''}`}
                     onClick={() => setSelectedRisk(risk)}
                   >
-                    {risk === 'all' ? 'All risks' : riskLabel(risk)}
+                    {risk === 'all' ? '全部风险' : riskLabel(risk)}
                   </button>
                 ))}
               </div>
               <div className="toolbar-actions">
                 <button onClick={selectVisibleSafeItems} disabled={!scanResult || filteredItems.length === 0}>
-                  Select visible safe
+                  选择当前可见安全项
                 </button>
                 <button onClick={clearSelection} disabled={selectedItems.length === 0}>
-                  Clear
+                  清空选择
                 </button>
                 <button className="danger-action" onClick={cleanSelectedItems} disabled={selectedItems.length === 0 || cleaning}>
-                  {cleaning ? 'Cleaning...' : `Clean ${selectedItems.length}`}
+                  {cleaning ? '清理中...' : `清理 ${selectedItems.length} 项`}
                 </button>
               </div>
             </section>
 
             {cleanResult && (
-              <section className="result-panel">
-                <strong>Clean result</strong>
+              <section className="result-panel" aria-live="polite">
+                <strong>清理结果</strong>
                 <span>{cleanResult.message}</span>
-                <span>{cleanResult.deleted_files} deleted | {formatBytes(cleanResult.freed_size)} freed | {cleanResult.failed_files.length} failed</span>
+                <span>已删除 {cleanResult.deleted_files} 项 | 释放 {formatBytes(cleanResult.freed_size)} | 失败 {cleanResult.failed_files.length} 项</span>
                 {cleanResult.failed_files.length > 0 && (
                   <ul>
                     {cleanResult.failed_files.map((path) => (
@@ -388,21 +414,21 @@ function App() {
 
             <section className="table-section">
               <div className="section-heading">
-                <h2>Scan Results</h2>
-                {scanResult && <span>{filteredItems.length} visible / {scanItems.length} total</span>}
+                <h2>扫描结果</h2>
+                {scanResult && <span>当前显示 {filteredItems.length} 项 / 共 {scanItems.length} 项，耗时 {scanResult.duration_ms} ms</span>}
               </div>
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th className="checkbox-col">Pick</th>
-                      <th>Name</th>
-                      <th>Category</th>
-                      <th>Risk</th>
-                      <th>Size</th>
-                      <th>Modified</th>
-                      <th>Source</th>
-                      <th>Path</th>
+                      <th className="checkbox-col">勾选</th>
+                      <th>名称</th>
+                      <th>分类</th>
+                      <th>风险</th>
+                      <th>大小</th>
+                      <th>修改时间</th>
+                      <th>来源规则</th>
+                      <th>路径</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -430,12 +456,12 @@ function App() {
                     ))}
                     {!scanResult && (
                       <tr>
-                        <td colSpan={8} className="empty-row">No scan results</td>
+                        <td colSpan={8} className="empty-row">尚未扫描</td>
                       </tr>
                     )}
                     {scanResult && filteredItems.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="empty-row">No matching items</td>
+                        <td colSpan={8} className="empty-row">当前筛选条件下没有匹配项</td>
                       </tr>
                     )}
                   </tbody>
@@ -444,8 +470,8 @@ function App() {
             </section>
 
             {scanResult && scanResult.errors.length > 0 && (
-              <section className="notice-panel">
-                <strong>Scan failures</strong>
+              <section className="notice-panel" role="alert">
+                <strong>扫描失败项</strong>
                 <ul>
                   {scanResult.errors.map((scanError) => (
                     <li key={`${scanError.path}-${scanError.reason}`}>
@@ -459,37 +485,53 @@ function App() {
 
             <section className="table-section">
               <div className="section-heading">
-                <h2>Operation Log</h2>
-                <span>{operationLogs.length} recent entries</span>
+                <h2>操作日志</h2>
+                <span>最近 {operationLogs.length} 条记录</span>
               </div>
               <div className="table-wrap">
                 <table className="data-table compact-table">
                   <thead>
                     <tr>
-                      <th>Time</th>
-                      <th>Operation</th>
-                      <th>Scanned</th>
-                      <th>Deleted</th>
-                      <th>Freed</th>
-                      <th>Failures</th>
-                      <th>Duration</th>
+                      <th>时间</th>
+                      <th>操作</th>
+                      <th>扫描数</th>
+                      <th>删除数</th>
+                      <th>释放空间</th>
+                      <th>失败详情</th>
+                      <th>耗时</th>
                     </tr>
                   </thead>
                   <tbody>
                     {operationLogs.map((entry, idx) => (
                       <tr key={`${entry.timestamp}-${idx}`}>
                         <td>{formatTimestamp(entry.timestamp)}</td>
-                        <td>{entry.operation}</td>
+                        <td>{operationLabel(entry.operation)}</td>
                         <td>{entry.scanned_files}</td>
                         <td>{entry.deleted_files}</td>
                         <td>{formatBytes(entry.freed_size)}</td>
-                        <td>{entry.failed_paths?.length || 0}</td>
+                        <td className="log-failure-cell">
+                          {(entry.failed_paths?.length || 0) === 0 ? (
+                            '0'
+                          ) : (
+                            <details>
+                              <summary>{entry.failed_paths.length} 项</summary>
+                              <ul>
+                                {entry.failed_paths.map((path, failedIdx) => (
+                                  <li key={`${entry.timestamp}-${path}-${failedIdx}`}>
+                                    <code>{path}</code>
+                                    <span>{entry.failed_reasons?.[failedIdx] || '-'}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          )}
+                        </td>
                         <td>{entry.duration} ms</td>
                       </tr>
                     ))}
                     {operationLogs.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="empty-row">No operation logs</td>
+                        <td colSpan={7} className="empty-row">暂无操作日志</td>
                       </tr>
                     )}
                   </tbody>
