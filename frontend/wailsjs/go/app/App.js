@@ -6,6 +6,10 @@ export function Clean(arg1, arg2) {
   return window['go']['app']['App']['Clean'](arg1, arg2);
 }
 
+export function DeleteRegistryItems(arg1, arg2) {
+  return window['go']['app']['App']['DeleteRegistryItems'](arg1, arg2);
+}
+
 export function GetEnvInfo() {
   return window['go']['app']['App']['GetEnvInfo']();
 }
@@ -44,4 +48,16 @@ export function ListQuarantineRecords() {
 
 export function RestoreQuarantinedPlugin(arg1) {
   return window['go']['app']['App']['RestoreQuarantinedPlugin'](arg1);
+}
+
+export function ScanInvalidStartupRegistry() {
+  return window['go']['app']['App']['ScanInvalidStartupRegistry']();
+}
+
+export function SelectShredFile() {
+  return window['go']['app']['App']['SelectShredFile']();
+}
+
+export function ShredFile(arg1, arg2) {
+  return window['go']['app']['App']['ShredFile'](arg1, arg2);
 }

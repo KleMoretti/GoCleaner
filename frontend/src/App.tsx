@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import './App.css';
 import {
   Clean,
+  DeleteRegistryItems,
   GetEnvInfo,
   GetOperationLogs,
   GetRulesPreview,
@@ -9,7 +10,11 @@ import {
   Ping,
   QuarantinePlugins,
   Scan,
+  ScanInvalidStartupRegistry,
+  SelectShredFile,
+  ShredFile,
 } from '../wailsjs/go/app/App';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 import {
   CategoryLabels,
   RiskColors,
@@ -17,6 +22,9 @@ import {
 } from './models';
 import {
   countFailures,
+  describeCleanOutcome,
+  describeResultOutcome,
+  hasPermissionFailure,
   reconcileItemsAfterClean,
   summarizeSelection,
 } from './summary';
@@ -25,12 +33,25 @@ import type {
   CleanRule,
   OperationLog,
   QuarantineResult,
+  RegistryActionResult,
   RiskLevel,
   ScanItem,
+  ScanProgress,
   ScanResult,
+  ShredResult,
 } from './models';
 
 type RiskFilter = 'all' | RiskLevel;
+type ConfirmVariant = 'default' | 'warning' | 'danger';
+
+interface ConfirmDialogState {
+  title: string;
+  body: string[];
+  confirmLabel: string;
+  cancelLabel: string;
+  variant: ConfirmVariant;
+  resolve: (confirmed: boolean) => void;
+}
 
 const riskOrder: RiskLevel[] = ['low', 'medium', 'high'];
 
@@ -88,6 +109,43 @@ function operationLabel(operation: string): string {
   return labels[operation] || operation || '-';
 }
 
+function scanPhaseLabel(phase: ScanProgress['phase']): string {
+  const labels: Record<ScanProgress['phase'], string> = {
+    loading_rules: '加载规则',
+    scanning_files: '扫描文件',
+    scanning_plugins: '扫描插件',
+    scanning_registry: '扫描注册表',
+    done: '完成',
+  };
+  return labels[phase] || phase;
+}
+
+function outcomeLabel(outcome: ReturnType<typeof describeCleanOutcome>): string {
+  switch (outcome) {
+    case 'success':
+      return '全部成功';
+    case 'partial':
+      return '部分成功';
+    case 'failed':
+      return '全部失败';
+    case 'empty':
+      return '未处理任何项目';
+    default:
+      return '';
+  }
+}
+
+function resultPanelClass(outcome: ReturnType<typeof describeCleanOutcome>): string {
+  return `result-panel ${outcome ? `result-${outcome}` : ''}`;
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("reading 'app'") || message.includes('window.go')) {
@@ -104,7 +162,13 @@ function App() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [cleanResult, setCleanResult] = useState<CleanResult | null>(null);
   const [quarantineResult, setQuarantineResult] = useState<QuarantineResult | null>(null);
+  const [registryResult, setRegistryResult] = useState<RegistryActionResult | null>(null);
+  const [shredResult, setShredResult] = useState<ShredResult | null>(null);
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [operationLogs, setOperationLogs] = useState<OperationLog[]>([]);
+  const [shredPath, setShredPath] = useState('');
+  const [shredPasses, setShredPasses] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRisk, setSelectedRisk] = useState<RiskFilter>('all');
   const [loading, setLoading] = useState(true);
@@ -115,6 +179,34 @@ function App() {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  useEffect(() => {
+    const runtime = (window as unknown as { runtime?: { EventsOn?: unknown } }).runtime;
+    if (!runtime?.EventsOn) {
+      return;
+    }
+    const off = EventsOn('gocleaner:scan-progress', (progress: ScanProgress) => {
+      setScanProgress(progress);
+    });
+    return () => {
+      if (typeof off === 'function') {
+        off();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!confirmDialog) {
+      return;
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        closeConfirmDialog(false);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmDialog]);
 
   async function loadOperationLogs() {
     const logs = await GetOperationLogs(30);
@@ -149,14 +241,26 @@ function App() {
   async function runScan() {
     try {
       setScanning(true);
+      setScanProgress({
+        phase: 'loading_rules',
+        current_label: '准备扫描',
+        completed_steps: 0,
+        total_steps: rules.length + 1,
+        found_items: 0,
+        failed_items: 0,
+        percent: 0,
+      });
       setCleanResult(null);
       setQuarantineResult(null);
+      setRegistryResult(null);
+      setShredResult(null);
       const result = await Scan();
       setScanResult(result as unknown as ScanResult);
       await loadOperationLogs();
       setError(null);
     } catch (e: any) {
       setError(errorMessage(e));
+      setScanProgress(null);
     } finally {
       setScanning(false);
     }
@@ -195,6 +299,7 @@ function App() {
   const selectedItems = selectionSummary.items;
   const selectedCleanItems = selectionSummary.cleanableItems;
   const selectedPluginItems = selectionSummary.pluginItems;
+  const selectedRegistryItems = selectionSummary.registryItems;
   const selectedSize = selectionSummary.size;
   const selectedPluginSize = selectionSummary.pluginSize;
   const selectedRiskCounts = selectionSummary.riskCounts;
@@ -203,11 +308,36 @@ function App() {
     () => countFailures(scanResult, cleanResult),
     [scanResult, cleanResult],
   );
+  const cleanOutcome = useMemo(() => describeCleanOutcome(cleanResult), [cleanResult]);
+  const quarantineOutcome = useMemo(() => (
+    quarantineResult
+      ? describeResultOutcome(
+        quarantineResult.moved_items + quarantineResult.restored_items,
+        quarantineResult.failed_items.length,
+      )
+      : null
+  ), [quarantineResult]);
+  const registryOutcome = useMemo(() => (
+    registryResult
+      ? describeResultOutcome(registryResult.deleted_values, registryResult.failed_items.length)
+      : null
+  ), [registryResult]);
+  const shredOutcome = useMemo(() => (
+    shredResult
+      ? describeResultOutcome(shredResult.shredded_files, shredResult.failed_files.length)
+      : null
+  ), [shredResult]);
+  const scanHasPermissionFailure = hasPermissionFailure((scanResult?.errors || []).map((scanError) => scanError.reason));
+  const cleanHasPermissionFailure = hasPermissionFailure(Object.values(cleanResult?.failed_reasons || {}));
+  const quarantineHasPermissionFailure = hasPermissionFailure(Object.values(quarantineResult?.failed_reasons || {}));
+  const registryHasPermissionFailure = hasPermissionFailure(Object.values(registryResult?.failed_reasons || {}));
+  const shredHasPermissionFailure = hasPermissionFailure(Object.values(shredResult?.failed_reasons || {}));
+  const progressPercent = clampPercent(scanProgress?.percent || 0);
 
   function selectVisibleSafeItems() {
     const visibleSafeIds = new Set(
       filteredItems
-        .filter((item) => item.risk !== 'high' && item.type !== 'plugin')
+        .filter((item) => item.risk !== 'high' && item.type === 'file')
         .map((item) => item.id),
     );
     setScanResult((current) => {
@@ -244,14 +374,33 @@ function App() {
       `选中项：${selectedCleanItems.length} 项`,
       `预计释放：${formatBytes(selectedSize)}`,
       `风险构成：低风险 ${selectedCleanItems.filter((item) => item.risk === 'low').length}，中风险 ${selectedCleanItems.filter((item) => item.risk === 'medium').length}，高风险 ${selectedCleanItems.filter((item) => item.risk === 'high').length}`,
-    ].join('\n');
+    ];
 
-    if (!window.confirm(`确认清理选中文件？\n${summary}`)) {
+    const confirmed = await requestConfirmation({
+      title: '确认清理选中文件',
+      body: summary,
+      confirmLabel: '确认清理',
+      cancelLabel: '取消',
+      variant: hasHighRiskSelection ? 'danger' : 'default',
+    });
+    if (!confirmed) {
       return;
     }
 
-    if (hasHighRiskSelection && !window.confirm('已选中高风险项目。系统目录或敏感路径可能需要管理员权限，且失败原因会记录到日志。确认继续清理？')) {
-      return;
+    if (hasHighRiskSelection) {
+      const highRiskConfirmed = await requestConfirmation({
+        title: '高风险项目二次确认',
+        body: [
+          '已选中高风险项目。系统目录或敏感路径可能需要管理员权限。',
+          '清理失败时会保留失败项目，并把具体原因写入结果面板和操作日志。',
+        ],
+        confirmLabel: '继续清理',
+        cancelLabel: '返回检查',
+        variant: 'danger',
+      });
+      if (!highRiskConfirmed) {
+        return;
+      }
     }
 
     try {
@@ -260,6 +409,8 @@ function App() {
       const clean = result as unknown as CleanResult;
       setCleanResult(clean);
       setQuarantineResult(null);
+      setRegistryResult(null);
+      setShredResult(null);
 
       setScanResult((current) => {
         if (!current) {
@@ -283,6 +434,21 @@ function App() {
     }
   }
 
+  function requestConfirmation(options: Omit<ConfirmDialogState, 'resolve'>): Promise<boolean> {
+    return new Promise((resolve) => {
+      setConfirmDialog({ ...options, resolve });
+    });
+  }
+
+  function closeConfirmDialog(confirmed: boolean) {
+    setConfirmDialog((current) => {
+      if (current) {
+        current.resolve(confirmed);
+      }
+      return null;
+    });
+  }
+
   async function quarantineSelectedPlugins() {
     if (selectedPluginItems.length === 0) {
       return;
@@ -292,9 +458,16 @@ function App() {
       `选中插件：${selectedPluginItems.length} 项`,
       `插件目录占用：${formatBytes(selectedPluginSize)}`,
       '操作方式：移动到 data/quarantine/plugins，可从隔离记录恢复，不直接删除。',
-    ].join('\n');
+    ];
 
-    if (!window.confirm(`确认隔离选中插件？\n${summary}`)) {
+    const confirmed = await requestConfirmation({
+      title: '确认隔离选中插件',
+      body: summary,
+      confirmLabel: '确认隔离',
+      cancelLabel: '取消',
+      variant: 'warning',
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -304,6 +477,8 @@ function App() {
       const quarantine = result as unknown as QuarantineResult;
       setQuarantineResult(quarantine);
       setCleanResult(null);
+      setRegistryResult(null);
+      setShredResult(null);
 
       setScanResult((current) => {
         if (!current) {
@@ -324,6 +499,194 @@ function App() {
         };
       });
 
+      await loadOperationLogs();
+      setError(null);
+    } catch (e: any) {
+      setError(errorMessage(e));
+    } finally {
+      setCleaning(false);
+    }
+  }
+
+  async function runRegistryScan() {
+    try {
+      setScanning(true);
+      setScanProgress({
+        phase: 'scanning_registry',
+        current_label: '准备扫描 HKCU Run',
+        completed_steps: 0,
+        total_steps: 1,
+        found_items: 0,
+        failed_items: 0,
+        percent: 0,
+      });
+      setCleanResult(null);
+      setQuarantineResult(null);
+      setRegistryResult(null);
+      setShredResult(null);
+      const result = await ScanInvalidStartupRegistry();
+      const registryScan = result as unknown as ScanResult;
+
+      setScanResult((current) => {
+        if (!current) {
+          return registryScan;
+        }
+        const items = [
+          ...current.items.filter((item) => item.type !== 'registry'),
+          ...(registryScan.items || []),
+        ];
+        return {
+          ...current,
+          items,
+          errors: [...(current.errors || []), ...(registryScan.errors || [])],
+          total_files: items.filter((item) => item.type === 'file').length,
+          total_size: items.reduce((total, item) => total + item.size, 0),
+          duration_ms: current.duration_ms + registryScan.duration_ms,
+        };
+      });
+
+      await loadOperationLogs();
+      setError(null);
+    } catch (e: any) {
+      setError(errorMessage(e));
+      setScanProgress(null);
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function deleteSelectedRegistryItems() {
+    if (selectedRegistryItems.length === 0) {
+      return;
+    }
+
+    const summary = [
+      `选中注册表项：${selectedRegistryItems.length} 项`,
+      '范围：仅 HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run 中的无效启动项。',
+      '删除前会导出 .reg 备份到 data/registry_backup/。',
+    ];
+
+    const confirmed = await requestConfirmation({
+      title: '确认备份并删除注册表项',
+      body: ['注册表删除可能影响应用自启动。', ...summary],
+      confirmLabel: '确认下一步',
+      cancelLabel: '取消',
+      variant: 'danger',
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    const highRiskConfirmed = await requestConfirmation({
+      title: '注册表高风险二次确认',
+      body: [
+        '这是高风险操作。程序会先导出备份，备份失败时拒绝删除。',
+        '只删除当前选中的注册表值，不扫描或修复全注册表。',
+      ],
+      confirmLabel: '备份后删除',
+      cancelLabel: '返回检查',
+      variant: 'danger',
+    });
+    if (!highRiskConfirmed) {
+      return;
+    }
+
+    try {
+      setCleaning(true);
+      const result = await DeleteRegistryItems(selectedRegistryItems as any, true);
+      const registry = result as unknown as RegistryActionResult;
+      setRegistryResult(registry);
+      setCleanResult(null);
+      setQuarantineResult(null);
+      setShredResult(null);
+
+      setScanResult((current) => {
+        if (!current) {
+          return current;
+        }
+        const failedPaths = new Set(registry.failed_items || []);
+        const selectedPaths = new Set(selectedRegistryItems.map((item) => item.path));
+        const items = current.items
+          .filter((item) => !(selectedPaths.has(item.path) && !failedPaths.has(item.path)))
+          .map((item) => (
+            failedPaths.has(item.path) ? { ...item, selected: false } : item
+          ));
+        return {
+          ...current,
+          items,
+          total_files: items.filter((item) => item.type === 'file').length,
+          total_size: items.reduce((total, item) => total + item.size, 0),
+        };
+      });
+
+      await loadOperationLogs();
+      setError(null);
+    } catch (e: any) {
+      setError(errorMessage(e));
+    } finally {
+      setCleaning(false);
+    }
+  }
+
+  async function chooseShredFile() {
+    try {
+      const path = await SelectShredFile();
+      if (path) {
+        setShredPath(path);
+      }
+      setError(null);
+    } catch (e: any) {
+      setError(errorMessage(e));
+    }
+  }
+
+  async function shredSelectedFile() {
+    if (!shredPath.trim()) {
+      return;
+    }
+
+    const warning = [
+      `文件：${shredPath}`,
+      `覆写次数：${shredPasses}`,
+      '限制：SSD、NTFS 日志、系统缓存、云同步目录等场景下无法保证专业取证级不可恢复。',
+    ];
+
+    const confirmed = await requestConfirmation({
+      title: '确认粉碎该文件',
+      body: warning,
+      confirmLabel: '确认下一步',
+      cancelLabel: '取消',
+      variant: 'danger',
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    const highRiskConfirmed = await requestConfirmation({
+      title: '文件粉碎二次确认',
+      body: [
+        '粉碎后无法通过本程序恢复。',
+        '确认继续执行覆写、随机重命名并删除该文件。',
+      ],
+      confirmLabel: '继续粉碎',
+      cancelLabel: '返回检查',
+      variant: 'danger',
+    });
+    if (!highRiskConfirmed) {
+      return;
+    }
+
+    try {
+      setCleaning(true);
+      const result = await ShredFile({ path: shredPath, passes: shredPasses } as any, true);
+      const shred = result as unknown as ShredResult;
+      setShredResult(shred);
+      setCleanResult(null);
+      setQuarantineResult(null);
+      setRegistryResult(null);
+      if (shred.shredded_files > 0) {
+        setShredPath('');
+      }
       await loadOperationLogs();
       setError(null);
     } catch (e: any) {
@@ -371,6 +734,22 @@ function App() {
               </section>
             )}
 
+            {scanProgress && (
+              <section className="progress-panel" aria-live="polite">
+                <div className="progress-copy">
+                  <strong>{scanPhaseLabel(scanProgress.phase)}</strong>
+                  <span>{scanProgress.current_label || '等待后端返回进度'}</span>
+                </div>
+                <div className="progress-meta">
+                  <span>{progressPercent}%</span>
+                  <span>发现 {scanProgress.found_items} 项 / 失败 {scanProgress.failed_items} 项</span>
+                </div>
+                <div className="progress-track" aria-label="扫描进度">
+                  <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+                </div>
+              </section>
+            )}
+
             <section className="stats-bar">
               <div className="stat-item">
                 <span className="stat-value">{scanResult ? scanResult.total_files : ruleStats.total}</span>
@@ -391,6 +770,10 @@ function App() {
               <div className={`stat-item ${selectedPluginItems.length > 0 ? 'stat-warning' : ''}`}>
                 <span className="stat-value">{selectedPluginItems.length}</span>
                 <span className="stat-label">已选插件（{formatBytes(selectedPluginSize)}）</span>
+              </div>
+              <div className={`stat-item ${selectedRegistryItems.length > 0 ? 'stat-high' : ''}`}>
+                <span className="stat-value">{selectedRegistryItems.length}</span>
+                <span className="stat-label">已选注册表项</span>
               </div>
               <div className={`stat-item ${failureSummary.total > 0 ? 'stat-warning' : ''}`}>
                 <span className="stat-value">{failureSummary.total}</span>
@@ -446,6 +829,9 @@ function App() {
                 ))}
               </div>
               <div className="toolbar-actions">
+                <button onClick={runRegistryScan} disabled={loading || scanning || cleaning}>
+                  {scanning ? '扫描中...' : '扫描注册表'}
+                </button>
                 <button onClick={selectVisibleSafeItems} disabled={!scanResult || filteredItems.length === 0}>
                   选择当前可见安全项
                 </button>
@@ -455,17 +841,49 @@ function App() {
                 <button className="warning-action" onClick={quarantineSelectedPlugins} disabled={selectedPluginItems.length === 0 || cleaning}>
                   {cleaning ? '处理中...' : `隔离插件 ${selectedPluginItems.length} 项`}
                 </button>
+                <button className="danger-action" onClick={deleteSelectedRegistryItems} disabled={selectedRegistryItems.length === 0 || cleaning}>
+                  {cleaning ? '处理中...' : `备份并删除注册表 ${selectedRegistryItems.length} 项`}
+                </button>
                 <button className="danger-action" onClick={cleanSelectedItems} disabled={selectedCleanItems.length === 0 || cleaning}>
                   {cleaning ? '清理中...' : `清理 ${selectedCleanItems.length} 项`}
                 </button>
               </div>
             </section>
 
+            <section className="shred-panel">
+              <div className="section-heading inline-heading">
+                <h2>文件粉碎</h2>
+                <span>仅手动选择单个普通文件</span>
+              </div>
+              <div className="shred-controls">
+                <button onClick={chooseShredFile} disabled={cleaning}>选择文件粉碎</button>
+                <input value={shredPath} readOnly placeholder="尚未选择文件" aria-label="待粉碎文件路径" />
+                <label>
+                  覆写次数
+                  <select value={shredPasses} onChange={(event) => setShredPasses(Number(event.target.value))}>
+                    <option value={1}>1</option>
+                    <option value={3}>3</option>
+                    <option value={7}>7</option>
+                  </select>
+                </label>
+                <button className="danger-action" onClick={shredSelectedFile} disabled={!shredPath || cleaning}>
+                  {cleaning ? '粉碎中...' : '确认粉碎'}
+                </button>
+              </div>
+              <p className="risk-copy">
+                文件粉碎是高风险操作。SSD、NTFS 日志、系统缓存、云同步目录等场景下无法保证专业取证级不可恢复。
+              </p>
+            </section>
+
             {cleanResult && (
-              <section className="result-panel" aria-live="polite">
+              <section className={resultPanelClass(cleanOutcome)} aria-live="polite">
                 <strong>清理结果</strong>
+                <span className="result-state">{outcomeLabel(cleanOutcome)}</span>
                 <span>{cleanResult.message}</span>
                 <span>已删除 {cleanResult.deleted_files} 项 | 释放 {formatBytes(cleanResult.freed_size)} | 失败 {cleanResult.failed_files.length} 项</span>
+                {cleanHasPermissionFailure && (
+                  <span className="recovery-hint">存在权限不足项：可跳过该项，或确认文件不重要后以管理员身份运行；程序不会自动提权。</span>
+                )}
                 {cleanResult.failed_files.length > 0 && (
                   <ul>
                     {cleanResult.failed_files.map((path) => (
@@ -480,16 +898,64 @@ function App() {
             )}
 
             {quarantineResult && (
-              <section className="result-panel" aria-live="polite">
+              <section className={resultPanelClass(quarantineOutcome)} aria-live="polite">
                 <strong>隔离结果</strong>
+                <span className="result-state">{outcomeLabel(quarantineOutcome)}</span>
                 <span>{quarantineResult.message}</span>
                 <span>已隔离 {quarantineResult.moved_items} 项 | 已恢复 {quarantineResult.restored_items} 项 | 失败 {quarantineResult.failed_items.length} 项</span>
+                {quarantineHasPermissionFailure && (
+                  <span className="recovery-hint">存在权限不足项：请关闭占用该插件目录的浏览器，必要时以管理员身份运行后重试。</span>
+                )}
                 {quarantineResult.failed_items.length > 0 && (
                   <ul>
                     {quarantineResult.failed_items.map((path) => (
                       <li key={path}>
                         <code>{path}</code>
                         <span>{quarantineResult.failed_reasons[path]}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
+
+            {registryResult && (
+              <section className={resultPanelClass(registryOutcome)} aria-live="polite">
+                <strong>注册表结果</strong>
+                <span className="result-state">{outcomeLabel(registryOutcome)}</span>
+                <span>{registryResult.message}</span>
+                <span>已删除 {registryResult.deleted_values} 项 | 备份 {registryResult.backup_path || '-'} | 失败 {registryResult.failed_items.length} 项</span>
+                {registryHasPermissionFailure && (
+                  <span className="recovery-hint">存在权限不足项：当前版本只处理 HKCU 安全范围，不会尝试全注册表修复或静默跳过。</span>
+                )}
+                {registryResult.failed_items.length > 0 && (
+                  <ul>
+                    {registryResult.failed_items.map((path) => (
+                      <li key={path}>
+                        <code>{path}</code>
+                        <span>{registryResult.failed_reasons[path]}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
+
+            {shredResult && (
+              <section className={resultPanelClass(shredOutcome)} aria-live="polite">
+                <strong>粉碎结果</strong>
+                <span className="result-state">{outcomeLabel(shredOutcome)}</span>
+                <span>{shredResult.message}</span>
+                <span>已粉碎 {shredResult.shredded_files} 项 | 释放 {formatBytes(shredResult.freed_size)} | 失败 {shredResult.failed_files.length} 项</span>
+                {shredHasPermissionFailure && (
+                  <span className="recovery-hint">存在权限不足项：请确认文件未被系统或同步程序占用，必要时选择测试文件演示粉碎流程。</span>
+                )}
+                {shredResult.failed_files.length > 0 && (
+                  <ul>
+                    {shredResult.failed_files.map((path) => (
+                      <li key={path}>
+                        <code>{path}</code>
+                        <span>{shredResult.failed_reasons[path]}</span>
                       </li>
                     ))}
                   </ul>
@@ -533,6 +999,11 @@ function App() {
                               {item.plugin.browser} / {item.plugin.profile} / v{item.plugin.version || '-'}
                             </div>
                           )}
+                          {item.registry && (
+                            <div className="item-meta">
+                              {item.registry.hive} / {item.registry.value_type}
+                            </div>
+                          )}
                         </td>
                         <td>{categoryLabel(item.category)}</td>
                         <td>
@@ -547,6 +1018,9 @@ function App() {
                           {item.plugin && (
                             <div className="item-meta">{item.plugin.extension_id}</div>
                           )}
+                          {item.registry && (
+                            <div className="item-meta">{item.registry.target_path}</div>
+                          )}
                         </td>
                         <td className="path-cell">{item.path}</td>
                       </tr>
@@ -558,7 +1032,9 @@ function App() {
                     )}
                     {scanResult && filteredItems.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="empty-row">当前筛选条件下没有匹配项</td>
+                        <td colSpan={8} className="empty-row">
+                          {scanItems.length === 0 ? '扫描完成，未发现可清理项目' : '当前筛选条件下没有匹配项'}
+                        </td>
                       </tr>
                     )}
                   </tbody>
@@ -569,6 +1045,9 @@ function App() {
             {scanResult && scanResult.errors.length > 0 && (
               <section className="notice-panel" role="alert">
                 <strong>扫描失败项</strong>
+                {scanHasPermissionFailure && (
+                  <span className="recovery-hint">存在权限不足路径：这通常来自系统目录或被策略保护的目录，可保留为失败记录，必要时以管理员身份运行后重新扫描。</span>
+                )}
                 <ul>
                   {scanResult.errors.map((scanError) => (
                     <li key={`${scanError.path}-${scanError.reason}`}>
@@ -638,6 +1117,37 @@ function App() {
           </>
         )}
       </main>
+
+      {confirmDialog && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className={`confirm-dialog confirm-${confirmDialog.variant}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+          >
+            <div className="confirm-header">
+              <h2 id="confirm-dialog-title">{confirmDialog.title}</h2>
+            </div>
+            <div className="confirm-body">
+              {confirmDialog.body.map((line, idx) => (
+                <p key={`${confirmDialog.title}-${idx}`}>{line}</p>
+              ))}
+            </div>
+            <div className="confirm-actions">
+              <button onClick={() => closeConfirmDialog(false)} autoFocus>
+                {confirmDialog.cancelLabel}
+              </button>
+              <button
+                className={confirmDialog.variant === 'danger' ? 'danger-action' : confirmDialog.variant === 'warning' ? 'warning-action' : 'primary-action'}
+                onClick={() => closeConfirmDialog(true)}
+              >
+                {confirmDialog.confirmLabel}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <footer className="app-footer">
         <span>GoCleaner v1.0-dev</span>

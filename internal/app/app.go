@@ -12,9 +12,12 @@ import (
 	"gocleaner/internal/cleaner"
 	"gocleaner/internal/logger"
 	"gocleaner/internal/model"
+	registryops "gocleaner/internal/registry"
 	"gocleaner/internal/rules"
 	"gocleaner/internal/scanner"
 	"gocleaner/internal/windows"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App is the main application struct. Its methods are automatically
@@ -23,6 +26,8 @@ type App struct {
 	ctx           context.Context
 	embeddedRules []byte // Embedded fallback rules from the binary
 }
+
+const scanProgressEvent = "gocleaner:scan-progress"
 
 // New creates a new App instance. embeddedRules is the content of the
 // default cleaner_rules.json embedded into the binary at build time.
@@ -74,6 +79,12 @@ func resolveRulesPath() string {
 // High-risk items are never pre-selected, even if a rule has default_on=true.
 func (a *App) Scan() (*model.ScanResult, error) {
 	start := time.Now()
+	a.emitScanProgress(model.ScanProgress{
+		Phase:        model.ScanPhaseLoadingRules,
+		CurrentLabel: "加载清理规则",
+		Percent:      5,
+	})
+
 	rulesList, err := a.GetRulesPreview()
 	if err != nil {
 		return nil, fmt.Errorf("加载规则失败: %w", err)
@@ -83,7 +94,21 @@ func (a *App) Scan() (*model.ScanResult, error) {
 		return nil, fmt.Errorf("没有可用的扫描规则")
 	}
 
-	result := scanner.Scan(rulesList)
+	result := scanner.ScanWithOptions(rulesList, scanner.ScanOptions{
+		OnProgress: func(progress model.ScanProgress) {
+			progress.Percent = 10 + progress.Percent*70/100
+			a.emitScanProgress(progress)
+		},
+	})
+	a.emitScanProgress(model.ScanProgress{
+		Phase:          model.ScanPhaseScanningPlugins,
+		CurrentLabel:   "扫描浏览器插件",
+		CompletedSteps: len(rulesList),
+		TotalSteps:     len(rulesList) + 1,
+		FoundItems:     len(result.Items),
+		FailedItems:    len(result.Errors),
+		Percent:        85,
+	})
 	pluginItems, pluginErrors := scanner.ScanBrowserPlugins(scanner.DefaultPluginTargets())
 	result.Items = append(result.Items, pluginItems...)
 	result.Errors = append(result.Errors, pluginErrors...)
@@ -91,6 +116,15 @@ func (a *App) Scan() (*model.ScanResult, error) {
 		result.TotalSize += item.Size
 	}
 	result.Duration = time.Since(start).Milliseconds()
+	a.emitScanProgress(model.ScanProgress{
+		Phase:          model.ScanPhaseDone,
+		CurrentLabel:   "扫描完成",
+		CompletedSteps: len(rulesList) + 1,
+		TotalSteps:     len(rulesList) + 1,
+		FoundItems:     len(result.Items),
+		FailedItems:    len(result.Errors),
+		Percent:        100,
+	})
 	if err := appendScanLog(result); err != nil {
 		return result, fmt.Errorf("record scan operation log: %w", err)
 	}
@@ -164,6 +198,80 @@ func (a *App) RestoreQuarantinedPlugin(recordID string) (*model.QuarantineResult
 		return result, fmt.Errorf("record restore operation log: %w", err)
 	}
 	return result, restoreErr
+}
+
+// ScanInvalidStartupRegistry scans only HKCU Run for invalid startup paths.
+func (a *App) ScanInvalidStartupRegistry() (*model.ScanResult, error) {
+	a.emitScanProgress(model.ScanProgress{
+		Phase:        model.ScanPhaseScanningRegistry,
+		CurrentLabel: "扫描 HKCU Run 无效启动项",
+		Percent:      10,
+	})
+	result, err := registryops.ScanInvalidStartup()
+	if err != nil {
+		return nil, err
+	}
+	a.emitScanProgress(model.ScanProgress{
+		Phase:          model.ScanPhaseDone,
+		CurrentLabel:   "注册表扫描完成",
+		CompletedSteps: 1,
+		TotalSteps:     1,
+		FoundItems:     len(result.Items),
+		FailedItems:    len(result.Errors),
+		Percent:        100,
+	})
+	if err := appendScanLog(result); err != nil {
+		return result, fmt.Errorf("record registry scan operation log: %w", err)
+	}
+	return result, nil
+}
+
+// DeleteRegistryItems backs up selected registry values before deleting them.
+func (a *App) DeleteRegistryItems(items []model.ScanItem, confirmed bool) (*model.RegistryActionResult, error) {
+	start := time.Now()
+	result, deleteErr := registryops.DeleteRegistryItems(items, confirmed)
+	if result == nil {
+		result = &model.RegistryActionResult{
+			FailedItems:   make([]string, 0),
+			FailedReasons: make(map[string]string),
+		}
+	}
+	if err := appendRegistryActionLog(result, time.Since(start).Milliseconds()); err != nil {
+		if deleteErr != nil {
+			return result, fmt.Errorf("%w; record registry operation log: %v", deleteErr, err)
+		}
+		return result, fmt.Errorf("record registry operation log: %w", err)
+	}
+	return result, deleteErr
+}
+
+// SelectShredFile opens a native file picker for the explicit shred workflow.
+func (a *App) SelectShredFile() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("Wails context is not ready")
+	}
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "选择要粉碎的文件",
+	})
+}
+
+// ShredFile executes the explicit high-risk file shredding workflow.
+func (a *App) ShredFile(request model.ShredRequest, confirmed bool) (*model.ShredResult, error) {
+	start := time.Now()
+	result, shredErr := cleaner.ShredFile(request, confirmed)
+	if result == nil {
+		result = &model.ShredResult{
+			FailedFiles:   make([]string, 0),
+			FailedReasons: make(map[string]string),
+		}
+	}
+	if err := appendShredLog(result, time.Since(start).Milliseconds()); err != nil {
+		if shredErr != nil {
+			return result, fmt.Errorf("%w; record shred operation log: %v", shredErr, err)
+		}
+		return result, fmt.Errorf("record shred operation log: %w", err)
+	}
+	return result, shredErr
 }
 
 // GetOperationLogs returns the newest operation log entries first.
@@ -298,4 +406,44 @@ func appendQuarantineLog(opType string, result *model.QuarantineResult, duration
 	}
 	entry.Duration = duration
 	return logger.New(logger.DefaultPath()).Append(*entry)
+}
+
+func appendRegistryActionLog(result *model.RegistryActionResult, duration int64) error {
+	store := logger.New(logger.DefaultPath())
+	if result.BackupPath != "" {
+		backupEntry := model.NewOperationLog(model.OpRegistryBackup)
+		backupEntry.DeletedFiles = 1
+		backupEntry.Duration = duration
+		if err := store.Append(*backupEntry); err != nil {
+			return err
+		}
+	}
+
+	deleteEntry := model.NewOperationLog(model.OpRegistryDelete)
+	deleteEntry.DeletedFiles = result.DeletedValues
+	deleteEntry.FailedPaths = append(deleteEntry.FailedPaths, result.FailedItems...)
+	for _, path := range result.FailedItems {
+		deleteEntry.FailedReasons = append(deleteEntry.FailedReasons, result.FailedReasons[path])
+	}
+	deleteEntry.Duration = duration
+	return store.Append(*deleteEntry)
+}
+
+func appendShredLog(result *model.ShredResult, duration int64) error {
+	entry := model.NewOperationLog(model.OpShred)
+	entry.DeletedFiles = result.ShreddedFiles
+	entry.FreedSize = result.FreedSize
+	entry.FailedPaths = append(entry.FailedPaths, result.FailedFiles...)
+	for _, path := range result.FailedFiles {
+		entry.FailedReasons = append(entry.FailedReasons, result.FailedReasons[path])
+	}
+	entry.Duration = duration
+	return logger.New(logger.DefaultPath()).Append(*entry)
+}
+
+func (a *App) emitScanProgress(progress model.ScanProgress) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, scanProgressEvent, progress)
 }

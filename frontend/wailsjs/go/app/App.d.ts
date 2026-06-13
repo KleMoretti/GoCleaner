@@ -4,6 +4,8 @@ import {model} from '../models';
 
 export function Clean(arg1:Array<model.ScanItem>,arg2:boolean):Promise<model.CleanResult>;
 
+export function DeleteRegistryItems(arg1:Array<model.ScanItem>,arg2:boolean):Promise<model.RegistryActionResult>;
+
 export function GetEnvInfo():Promise<Record<string, string>>;
 
 export function GetOperationLogs(arg1:number):Promise<Array<model.OperationLog>>;
@@ -23,3 +25,9 @@ export function Scan():Promise<model.ScanResult>;
 export function ListQuarantineRecords():Promise<Array<model.QuarantineRecord>>;
 
 export function RestoreQuarantinedPlugin(arg1:string):Promise<model.QuarantineResult>;
+
+export function ScanInvalidStartupRegistry():Promise<model.ScanResult>;
+
+export function SelectShredFile():Promise<string>;
+
+export function ShredFile(arg1:model.ShredRequest,arg2:boolean):Promise<model.ShredResult>;

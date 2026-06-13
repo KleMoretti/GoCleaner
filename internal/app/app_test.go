@@ -88,3 +88,60 @@ func TestAppCleanHighRiskWithoutConfirmationDoesNotDelete(t *testing.T) {
 		t.Fatalf("high-risk file should remain without confirmation: %v", statErr)
 	}
 }
+
+func TestAppShredFileWritesOperationLog(t *testing.T) {
+	dir := withTempWorkingDir(t)
+	path := filepath.Join(dir, "shred-me.txt")
+	if err := os.WriteFile(path, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	a := New(nil)
+	result, err := a.ShredFile(model.ShredRequest{Path: path, Passes: 1}, true)
+	if err != nil {
+		t.Fatalf("ShredFile returned error: %v", err)
+	}
+	if result.ShreddedFiles != 1 {
+		t.Fatalf("Shred result = %+v, want one shredded file", result)
+	}
+
+	logs, err := a.GetOperationLogs(10)
+	if err != nil {
+		t.Fatalf("GetOperationLogs returned error: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("log count = %d, want 1", len(logs))
+	}
+	if logs[0].Operation != model.OpShred || logs[0].DeletedFiles != 1 || logs[0].FreedSize == 0 {
+		t.Fatalf("operation log = %+v, want shred/deleted=1/freed>0", logs[0])
+	}
+}
+
+func TestAppendRegistryActionLogRecordsBackupAndDeleteCounts(t *testing.T) {
+	dir := withTempWorkingDir(t)
+	_ = dir
+	result := &model.RegistryActionResult{
+		DeletedValues: 1,
+		BackupPath:    filepath.Join("data", "registry_backup", "backup.reg"),
+		FailedItems:   []string{`HKCU\Software\Test\Bad`},
+		FailedReasons: map[string]string{`HKCU\Software\Test\Bad`: "permission denied"},
+	}
+
+	if err := appendRegistryActionLog(result, 12); err != nil {
+		t.Fatalf("appendRegistryActionLog returned error: %v", err)
+	}
+
+	logs, err := New(nil).GetOperationLogs(10)
+	if err != nil {
+		t.Fatalf("GetOperationLogs returned error: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("log count = %d, want backup and delete logs", len(logs))
+	}
+	if logs[1].Operation != model.OpRegistryBackup || logs[1].DeletedFiles != 1 || len(logs[1].FailedPaths) != 0 {
+		t.Fatalf("backup log = %+v", logs[1])
+	}
+	if logs[0].Operation != model.OpRegistryDelete || logs[0].DeletedFiles != 1 {
+		t.Fatalf("delete log = %+v", logs[0])
+	}
+}

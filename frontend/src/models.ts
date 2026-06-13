@@ -24,6 +24,7 @@ export interface ScanItem {
   last_modified: number;
   selected: boolean;
   plugin?: PluginInfo;
+  registry?: RegistryInfo;
 }
 
 export interface PluginInfo {
@@ -33,6 +34,17 @@ export interface PluginInfo {
   version: string;
   description: string;
   manifest_path: string;
+}
+
+export interface RegistryInfo {
+  hive: string;
+  key_path: string;
+  value_name: string;
+  value_type: string;
+  raw_data: string;
+  expanded_path: string;
+  target_path: string;
+  backup_path: string;
 }
 
 export interface ScanError {
@@ -46,6 +58,23 @@ export interface ScanResult {
   total_size: number;
   errors: ScanError[];
   duration_ms: number;
+}
+
+export type ScanPhase =
+  | 'loading_rules'
+  | 'scanning_files'
+  | 'scanning_plugins'
+  | 'scanning_registry'
+  | 'done';
+
+export interface ScanProgress {
+  phase: ScanPhase;
+  current_label: string;
+  completed_steps: number;
+  total_steps: number;
+  found_items: number;
+  failed_items: number;
+  percent: number;
 }
 
 export interface CleanResult {
@@ -72,6 +101,27 @@ export interface QuarantineResult {
   moved_items: number;
   restored_items: number;
   failed_items: string[];
+  failed_reasons: Record<string, string>;
+  message: string;
+}
+
+export interface RegistryActionResult {
+  deleted_values: number;
+  backup_path: string;
+  failed_items: string[];
+  failed_reasons: Record<string, string>;
+  message: string;
+}
+
+export interface ShredRequest {
+  path: string;
+  passes: number;
+}
+
+export interface ShredResult {
+  shredded_files: number;
+  freed_size: number;
+  failed_files: string[];
   failed_reasons: Record<string, string>;
   message: string;
 }
@@ -104,4 +154,5 @@ export const CategoryLabels: Record<string, string> = {
   software: '软件缓存',
   privacy: '隐私痕迹',
   plugin: '插件扫描',
+  registry: '注册表',
 };

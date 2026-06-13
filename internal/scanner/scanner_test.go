@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -613,5 +614,76 @@ func TestScan_ItemsSortedByRuleOrder(t *testing.T) {
 	}
 	if result.Items[1].Source != "第二个规则" {
 		t.Errorf("第二个扫描项来源 = %q, want %q", result.Items[1].Source, "第二个规则")
+	}
+}
+
+func TestScanWithOptionsReportsProgressByRule(t *testing.T) {
+	dir1 := makeTempDir(t, map[string]string{"a.tmp": "a"})
+	dir2 := makeTempDir(t, map[string]string{"b.log": "b"})
+	rule1 := makeRule("临时文件", "system", []string{dir1}, []string{"*.tmp"}, []string{}, model.RiskLow, 0, true)
+	rule2 := makeRule("日志文件", "system", []string{dir2}, []string{"*.log"}, []string{}, model.RiskLow, 0, true)
+
+	var progressEvents []model.ScanProgress
+	result := ScanWithOptions([]model.CleanRule{rule1, rule2}, ScanOptions{
+		OnProgress: func(progress model.ScanProgress) {
+			progressEvents = append(progressEvents, progress)
+		},
+	})
+
+	if result.TotalFiles != 2 {
+		t.Fatalf("TotalFiles = %d, want 2", result.TotalFiles)
+	}
+	if len(progressEvents) != 2 {
+		t.Fatalf("progress event count = %d, want 2", len(progressEvents))
+	}
+	first := progressEvents[0]
+	if first.Phase != model.ScanPhaseScanningFiles {
+		t.Fatalf("first phase = %q, want %q", first.Phase, model.ScanPhaseScanningFiles)
+	}
+	if first.CurrentLabel != "临时文件" {
+		t.Fatalf("first current label = %q, want 临时文件", first.CurrentLabel)
+	}
+	last := progressEvents[len(progressEvents)-1]
+	if last.CompletedSteps != 2 || last.TotalSteps != 2 {
+		t.Fatalf("last progress steps = %d/%d, want 2/2", last.CompletedSteps, last.TotalSteps)
+	}
+	if last.Percent != 100 {
+		t.Fatalf("last percent = %d, want 100", last.Percent)
+	}
+	if last.FoundItems != 2 || last.FailedItems != 0 {
+		t.Fatalf("last counts = found %d failed %d, want found 2 failed 0", last.FoundItems, last.FailedItems)
+	}
+}
+
+func TestClassifyScanAccessError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "permission denied",
+			err:  errors.New("open C:\\Windows\\Temp: Access is denied."),
+			want: "权限不足",
+		},
+		{
+			name: "file locked",
+			err:  errors.New("The process cannot access the file because it is being used by another process."),
+			want: "文件被占用",
+		},
+		{
+			name: "other failure",
+			err:  errors.New("unexpected test failure"),
+			want: "访问失败",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyScanAccessError(tt.err)
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("classifyScanAccessError() = %q, want contains %q", got, tt.want)
+			}
+		})
 	}
 }

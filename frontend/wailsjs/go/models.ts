@@ -94,6 +94,52 @@ export namespace model {
 	        this.manifest_path = source["manifest_path"];
 	    }
 	}
+	export class RegistryActionResult {
+	    deleted_values: number;
+	    backup_path: string;
+	    failed_items: string[];
+	    failed_reasons: Record<string, string>;
+	    message: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RegistryActionResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deleted_values = source["deleted_values"];
+	        this.backup_path = source["backup_path"];
+	        this.failed_items = source["failed_items"];
+	        this.failed_reasons = source["failed_reasons"];
+	        this.message = source["message"];
+	    }
+	}
+	export class RegistryInfo {
+	    hive: string;
+	    key_path: string;
+	    value_name: string;
+	    value_type: string;
+	    raw_data: string;
+	    expanded_path: string;
+	    target_path: string;
+	    backup_path: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RegistryInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hive = source["hive"];
+	        this.key_path = source["key_path"];
+	        this.value_name = source["value_name"];
+	        this.value_type = source["value_type"];
+	        this.raw_data = source["raw_data"];
+	        this.expanded_path = source["expanded_path"];
+	        this.target_path = source["target_path"];
+	        this.backup_path = source["backup_path"];
+	    }
+	}
 	export class QuarantineRecord {
 	    record_id: string;
 	    original_path: string;
@@ -168,6 +214,7 @@ export namespace model {
 	    last_modified: number;
 	    selected: boolean;
 	    plugin?: PluginInfo;
+	    registry?: RegistryInfo;
 
 	    static createFrom(source: any = {}) {
 	        return new ScanItem(source);
@@ -186,6 +233,7 @@ export namespace model {
 	        this.last_modified = source["last_modified"];
 	        this.selected = source["selected"];
 	        this.plugin = this.convertValues(source["plugin"], PluginInfo);
+	        this.registry = this.convertValues(source["registry"], RegistryInfo);
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -243,6 +291,40 @@ export namespace model {
 		    }
 		    return a;
 		}
+	}
+	export class ShredRequest {
+	    path: string;
+	    passes: number;
+
+	    static createFrom(source: any = {}) {
+	        return new ShredRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.passes = source["passes"];
+	    }
+	}
+	export class ShredResult {
+	    shredded_files: number;
+	    freed_size: number;
+	    failed_files: string[];
+	    failed_reasons: Record<string, string>;
+	    message: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ShredResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.shredded_files = source["shredded_files"];
+	        this.freed_size = source["freed_size"];
+	        this.failed_files = source["failed_files"];
+	        this.failed_reasons = source["failed_reasons"];
+	        this.message = source["message"];
+	    }
 	}
 
 }

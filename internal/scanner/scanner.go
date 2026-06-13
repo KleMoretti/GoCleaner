@@ -19,6 +19,12 @@ import (
 
 // ── Public API ───────────────────────────────────────────────────────────
 
+type ProgressCallback func(model.ScanProgress)
+
+type ScanOptions struct {
+	OnProgress ProgressCallback
+}
+
 // Scan runs a full scan using the given rules and returns the results.
 // It expands environment variables, resolves glob wildcards in paths,
 // walks directories, and applies pattern / exclude / age filters per rule.
@@ -27,6 +33,10 @@ import (
 // filtered out by the rules package. This function treats all input
 // rules as valid and scannable.
 func Scan(rules []model.CleanRule) *model.ScanResult {
+	return ScanWithOptions(rules, ScanOptions{})
+}
+
+func ScanWithOptions(rules []model.CleanRule, options ScanOptions) *model.ScanResult {
 	start := time.Now()
 	result := &model.ScanResult{
 		Items:  make([]model.ScanItem, 0),
@@ -38,6 +48,15 @@ func Scan(rules []model.CleanRule) *model.ScanResult {
 		items, errs := scanRule(rule)
 		result.Items = append(result.Items, items...)
 		result.Errors = append(result.Errors, errs...)
+		emitProgress(options.OnProgress, model.ScanProgress{
+			Phase:          model.ScanPhaseScanningFiles,
+			CurrentLabel:   rule.Name,
+			CompletedSteps: i + 1,
+			TotalSteps:     len(rules),
+			FoundItems:     len(result.Items),
+			FailedItems:    len(result.Errors),
+			Percent:        progressPercent(i+1, len(rules)),
+		})
 	}
 
 	// Compute summary totals from the flat item list.
@@ -106,7 +125,7 @@ func scanRule(rule *model.CleanRule) ([]model.ScanItem, []model.ScanError) {
 			if statErr != nil {
 				errs = append(errs, model.ScanError{
 					Path:   resolvedPath,
-					Reason: fmt.Sprintf("无法访问路径: %v", statErr),
+					Reason: classifyScanAccessError(statErr),
 				})
 				continue
 			}
@@ -144,7 +163,7 @@ func walkDir(root string, rule *model.CleanRule, items *[]model.ScanItem, errs *
 		if walkErr != nil {
 			*errs = append(*errs, model.ScanError{
 				Path:   path,
-				Reason: fmt.Sprintf("遍历失败: %v", walkErr),
+				Reason: classifyScanAccessError(walkErr),
 			})
 			return nil // keep walking siblings
 		}
@@ -158,7 +177,7 @@ func walkDir(root string, rule *model.CleanRule, items *[]model.ScanItem, errs *
 		if infoErr != nil {
 			*errs = append(*errs, model.ScanError{
 				Path:   path,
-				Reason: fmt.Sprintf("获取文件信息失败: %v", infoErr),
+				Reason: classifyScanAccessError(infoErr),
 			})
 			return nil
 		}
@@ -316,4 +335,42 @@ func normalizeRelPath(value string) string {
 	value = filepath.ToSlash(value)
 	value = strings.Trim(value, "/")
 	return strings.ToLower(value)
+}
+
+func emitProgress(callback ProgressCallback, progress model.ScanProgress) {
+	if callback != nil {
+		callback(progress)
+	}
+}
+
+func progressPercent(completed, total int) int {
+	if total <= 0 {
+		return 100
+	}
+	percent := completed * 100 / total
+	if percent < 0 {
+		return 0
+	}
+	if percent > 100 {
+		return 100
+	}
+	return percent
+}
+
+func classifyScanAccessError(err error) string {
+	message := err.Error()
+	lower := strings.ToLower(message)
+
+	switch {
+	case strings.Contains(lower, "being used by another process"),
+		strings.Contains(lower, "process cannot access"),
+		strings.Contains(lower, "sharing violation"),
+		strings.Contains(lower, "file is locked"):
+		return "文件被占用: " + message
+	case strings.Contains(lower, "access is denied"),
+		strings.Contains(lower, "permission denied"):
+		return "权限不足: " + message
+	default:
+		return "访问失败: " + message
+	}
 }

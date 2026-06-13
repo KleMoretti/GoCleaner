@@ -23,6 +23,7 @@ const (
 	CategorySoftware = "software"
 	CategoryPrivacy  = "privacy"
 	CategoryPlugin   = "plugin"
+	CategoryRegistry = "registry"
 )
 
 // Operation type constants for logging.
@@ -44,6 +45,15 @@ const (
 	TypePlugin    = "plugin"
 )
 
+// Scan progress phases emitted to the frontend.
+const (
+	ScanPhaseLoadingRules     = "loading_rules"
+	ScanPhaseScanningFiles    = "scanning_files"
+	ScanPhaseScanningPlugins  = "scanning_plugins"
+	ScanPhaseScanningRegistry = "scanning_registry"
+	ScanPhaseDone             = "done"
+)
+
 // CleanRule defines a single cleaning rule loaded from the JSON configuration.
 // Each rule specifies what to scan, where to look, and how risky the cleanup is.
 type CleanRule struct {
@@ -63,17 +73,18 @@ type CleanRule struct {
 // ScanItem represents a single scannable item discovered during scanning.
 // It may be a file, directory, registry entry, or plugin.
 type ScanItem struct {
-	ID           string      `json:"id"`               // Unique identifier: {category}_{path_hash}
-	Path         string      `json:"path"`             // Absolute path to the file/item
-	Name         string      `json:"name"`             // File name or display name
-	Type         string      `json:"type"`             // Type: file, directory, registry, plugin
-	Category     string      `json:"category"`         // Category from the parent rule
-	Size         int64       `json:"size"`             // File size in bytes (0 for non-files)
-	Risk         string      `json:"risk"`             // Risk level: low, medium, high
-	Source       string      `json:"source"`           // Name of the source rule
-	LastModified int64       `json:"last_modified"`    // Last modification time as Unix timestamp
-	Selected     bool        `json:"selected"`         // Whether this item is currently selected for cleanup
-	Plugin       *PluginInfo `json:"plugin,omitempty"` // Manifest metadata for browser plugins
+	ID           string        `json:"id"`                 // Unique identifier: {category}_{path_hash}
+	Path         string        `json:"path"`               // Absolute path to the file/item
+	Name         string        `json:"name"`               // File name or display name
+	Type         string        `json:"type"`               // Type: file, directory, registry, plugin
+	Category     string        `json:"category"`           // Category from the parent rule
+	Size         int64         `json:"size"`               // File size in bytes (0 for non-files)
+	Risk         string        `json:"risk"`               // Risk level: low, medium, high
+	Source       string        `json:"source"`             // Name of the source rule
+	LastModified int64         `json:"last_modified"`      // Last modification time as Unix timestamp
+	Selected     bool          `json:"selected"`           // Whether this item is currently selected for cleanup
+	Plugin       *PluginInfo   `json:"plugin,omitempty"`   // Manifest metadata for browser plugins
+	Registry     *RegistryInfo `json:"registry,omitempty"` // Registry metadata for invalid registry values
 }
 
 // PluginInfo contains browser extension metadata read from manifest.json.
@@ -108,6 +119,42 @@ type QuarantineResult struct {
 	Message       string            `json:"message"`
 }
 
+// RegistryInfo describes one invalid registry value found during registry scanning.
+type RegistryInfo struct {
+	Hive         string `json:"hive"`
+	KeyPath      string `json:"key_path"`
+	ValueName    string `json:"value_name"`
+	ValueType    string `json:"value_type"`
+	RawData      string `json:"raw_data"`
+	ExpandedPath string `json:"expanded_path"`
+	TargetPath   string `json:"target_path"`
+	BackupPath   string `json:"backup_path"`
+}
+
+// RegistryActionResult summarizes backup and deletion of selected registry values.
+type RegistryActionResult struct {
+	DeletedValues int               `json:"deleted_values"`
+	BackupPath    string            `json:"backup_path"`
+	FailedItems   []string          `json:"failed_items"`
+	FailedReasons map[string]string `json:"failed_reasons"`
+	Message       string            `json:"message"`
+}
+
+// ShredRequest describes one explicit user-selected file shred operation.
+type ShredRequest struct {
+	Path   string `json:"path"`
+	Passes int    `json:"passes"`
+}
+
+// ShredResult summarizes file shredding results.
+type ShredResult struct {
+	ShreddedFiles int               `json:"shredded_files"`
+	FreedSize     int64             `json:"freed_size"`
+	FailedFiles   []string          `json:"failed_files"`
+	FailedReasons map[string]string `json:"failed_reasons"`
+	Message       string            `json:"message"`
+}
+
 // ScanError records a path that could not be scanned and the reason why.
 type ScanError struct {
 	Path   string `json:"path"`
@@ -121,6 +168,17 @@ type ScanResult struct {
 	TotalSize  int64       `json:"total_size"`  // Total bytes across all files
 	Errors     []ScanError `json:"errors"`      // Paths that failed during scanning
 	Duration   int64       `json:"duration_ms"` // Scan duration in milliseconds
+}
+
+// ScanProgress describes coarse-grained scan progress for UI feedback.
+type ScanProgress struct {
+	Phase          string `json:"phase"`
+	CurrentLabel   string `json:"current_label"`
+	CompletedSteps int    `json:"completed_steps"`
+	TotalSteps     int    `json:"total_steps"`
+	FoundItems     int    `json:"found_items"`
+	FailedItems    int    `json:"failed_items"`
+	Percent        int    `json:"percent"`
 }
 
 // CleanResult summarizes the outcome of a cleaning operation.
