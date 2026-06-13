@@ -708,13 +708,13 @@ function App() {
       <header className="app-header">
         <div className="brand-block">
           <h1>GoCleaner</h1>
-          <span className="subtitle">Windows 空间清理工作台</span>
+          <span className="subtitle">Windows 清理工具</span>
         </div>
         <span className={`status-badge ${error ? 'status-error' : 'status-ok'}`}>
           {backendStatus}
         </span>
         <button className="primary-action" onClick={runScan} disabled={loading || scanning || cleaning}>
-          {scanning ? '扫描中...' : '开始扫描'}
+          {scanning ? '扫描中...' : '扫描'}
         </button>
       </header>
 
@@ -833,19 +833,19 @@ function App() {
                   {scanning ? '扫描中...' : '扫描注册表'}
                 </button>
                 <button onClick={selectVisibleSafeItems} disabled={!scanResult || filteredItems.length === 0}>
-                  选择当前可见安全项
+                  选择安全项
                 </button>
                 <button onClick={clearSelection} disabled={selectedItems.length === 0}>
                   清空选择
                 </button>
                 <button className="warning-action" onClick={quarantineSelectedPlugins} disabled={selectedPluginItems.length === 0 || cleaning}>
-                  {cleaning ? '处理中...' : `隔离插件 ${selectedPluginItems.length} 项`}
+                  {cleaning ? '处理中...' : `隔离插件 ${selectedPluginItems.length}`}
                 </button>
                 <button className="danger-action" onClick={deleteSelectedRegistryItems} disabled={selectedRegistryItems.length === 0 || cleaning}>
-                  {cleaning ? '处理中...' : `备份并删除注册表 ${selectedRegistryItems.length} 项`}
+                  {cleaning ? '处理中...' : `删除注册表项 ${selectedRegistryItems.length}`}
                 </button>
                 <button className="danger-action" onClick={cleanSelectedItems} disabled={selectedCleanItems.length === 0 || cleaning}>
-                  {cleaning ? '清理中...' : `清理 ${selectedCleanItems.length} 项`}
+                  {cleaning ? '清理中...' : `清理 ${selectedCleanItems.length}`}
                 </button>
               </div>
             </section>

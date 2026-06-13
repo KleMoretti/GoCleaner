@@ -144,9 +144,9 @@ export const RiskLabels: Record<RiskLevel, string> = {
 };
 
 export const RiskColors: Record<RiskLevel, string> = {
-  low: '#2f9d58',
-  medium: '#b7791f',
-  high: '#d64545',
+  low: '#e7f4ec',
+  medium: '#fff2cc',
+  high: '#fde7e9',
 };
 
 export const CategoryLabels: Record<string, string> = {

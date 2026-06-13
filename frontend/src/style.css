@@ -1,23 +1,15 @@
 html {
-    background-color: #101214;
-    color: #e7e3dc;
+    background-color: #f3f5f8;
+    color: #1f2933;
 }
 
 body {
     margin: 0;
-    color: #e7e3dc;
-    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    color: #1f2933;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto",
+    "Helvetica Neue", Arial,
     sans-serif;
     -webkit-font-smoothing: antialiased;
-}
-
-@font-face {
-    font-family: "Nunito";
-    font-style: normal;
-    font-weight: 400;
-    src: local(""),
-    url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
 }
 
 * {
@@ -29,10 +21,14 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-    background: #171a1d;
+    background: #edf0f4;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #4b5259;
+    background: #b8c0cc;
     border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #98a2b3;
 }
