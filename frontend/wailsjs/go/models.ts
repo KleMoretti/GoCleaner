@@ -72,6 +72,76 @@ export namespace model {
 	        this.duration = source["duration"];
 	    }
 	}
+	export class PluginInfo {
+	    browser: string;
+	    profile: string;
+	    extension_id: string;
+	    version: string;
+	    description: string;
+	    manifest_path: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PluginInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.browser = source["browser"];
+	        this.profile = source["profile"];
+	        this.extension_id = source["extension_id"];
+	        this.version = source["version"];
+	        this.description = source["description"];
+	        this.manifest_path = source["manifest_path"];
+	    }
+	}
+	export class QuarantineRecord {
+	    record_id: string;
+	    original_path: string;
+	    quarantine_path: string;
+	    name: string;
+	    item_type: string;
+	    browser: string;
+	    created_at: string;
+	    size: number;
+	    restored_at?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new QuarantineRecord(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.record_id = source["record_id"];
+	        this.original_path = source["original_path"];
+	        this.quarantine_path = source["quarantine_path"];
+	        this.name = source["name"];
+	        this.item_type = source["item_type"];
+	        this.browser = source["browser"];
+	        this.created_at = source["created_at"];
+	        this.size = source["size"];
+	        this.restored_at = source["restored_at"];
+	    }
+	}
+	export class QuarantineResult {
+	    moved_items: number;
+	    restored_items: number;
+	    failed_items: string[];
+	    failed_reasons: Record<string, string>;
+	    message: string;
+
+	    static createFrom(source: any = {}) {
+	        return new QuarantineResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.moved_items = source["moved_items"];
+	        this.restored_items = source["restored_items"];
+	        this.failed_items = source["failed_items"];
+	        this.failed_reasons = source["failed_reasons"];
+	        this.message = source["message"];
+	    }
+	}
 	export class ScanError {
 	    path: string;
 	    reason: string;
@@ -97,6 +167,7 @@ export namespace model {
 	    source: string;
 	    last_modified: number;
 	    selected: boolean;
+	    plugin?: PluginInfo;
 
 	    static createFrom(source: any = {}) {
 	        return new ScanItem(source);
@@ -114,7 +185,26 @@ export namespace model {
 	        this.source = source["source"];
 	        this.last_modified = source["last_modified"];
 	        this.selected = source["selected"];
+	        this.plugin = this.convertValues(source["plugin"], PluginInfo);
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ScanResult {
 	    items: ScanItem[];

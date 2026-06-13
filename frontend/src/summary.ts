@@ -4,10 +4,14 @@ export type RiskCounts = Record<RiskLevel, number>;
 
 export interface SelectionSummary {
   items: ScanItem[];
+  cleanableItems: ScanItem[];
+  pluginItems: ScanItem[];
   size: number;
+  pluginSize: number;
   riskCounts: RiskCounts;
   hasMediumRisk: boolean;
   hasHighRisk: boolean;
+  hasPlugins: boolean;
 }
 
 export interface FailureSummary {
@@ -24,18 +28,28 @@ const emptyRiskCounts = (): RiskCounts => ({
 
 export function summarizeSelection(items: ScanItem[]): SelectionSummary {
   const selected = items.filter((item) => item.selected);
+  const cleanableItems = selected.filter((item) => item.type !== 'plugin');
+  const pluginItems = selected.filter((item) => item.type === 'plugin');
   const riskCounts = emptyRiskCounts();
   const size = selected.reduce((total, item) => {
     riskCounts[item.risk] += 1;
+    if (item.type === 'plugin') {
+      return total;
+    }
     return total + item.size;
   }, 0);
+  const pluginSize = pluginItems.reduce((total, item) => total + item.size, 0);
 
   return {
     items: selected,
+    cleanableItems,
+    pluginItems,
     size,
+    pluginSize,
     riskCounts,
     hasMediumRisk: riskCounts.medium > 0,
     hasHighRisk: riskCounts.high > 0,
+    hasPlugins: pluginItems.length > 0,
   };
 }
 

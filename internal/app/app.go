@@ -73,6 +73,7 @@ func resolveRulesPath() string {
 //
 // High-risk items are never pre-selected, even if a rule has default_on=true.
 func (a *App) Scan() (*model.ScanResult, error) {
+	start := time.Now()
 	rulesList, err := a.GetRulesPreview()
 	if err != nil {
 		return nil, fmt.Errorf("加载规则失败: %w", err)
@@ -83,6 +84,13 @@ func (a *App) Scan() (*model.ScanResult, error) {
 	}
 
 	result := scanner.Scan(rulesList)
+	pluginItems, pluginErrors := scanner.ScanBrowserPlugins(scanner.DefaultPluginTargets())
+	result.Items = append(result.Items, pluginItems...)
+	result.Errors = append(result.Errors, pluginErrors...)
+	for _, item := range pluginItems {
+		result.TotalSize += item.Size
+	}
+	result.Duration = time.Since(start).Milliseconds()
 	if err := appendScanLog(result); err != nil {
 		return result, fmt.Errorf("record scan operation log: %w", err)
 	}
@@ -110,6 +118,52 @@ func (a *App) Clean(items []model.ScanItem, highRiskConfirmed bool) (*model.Clea
 	}
 
 	return result, cleanErr
+}
+
+// QuarantinePlugins moves selected plugin scan items into the quarantine area.
+func (a *App) QuarantinePlugins(items []model.ScanItem) (*model.QuarantineResult, error) {
+	start := time.Now()
+	store := cleaner.NewQuarantineStore(cleaner.DefaultQuarantineRoot())
+	result, quarantineErr := store.QuarantinePlugins(items)
+	if result == nil {
+		result = &model.QuarantineResult{
+			FailedItems:   make([]string, 0),
+			FailedReasons: make(map[string]string),
+		}
+	}
+
+	if err := appendQuarantineLog(model.OpQuarantine, result, time.Since(start).Milliseconds()); err != nil {
+		if quarantineErr != nil {
+			return result, fmt.Errorf("%w; record quarantine operation log: %v", quarantineErr, err)
+		}
+		return result, fmt.Errorf("record quarantine operation log: %w", err)
+	}
+	return result, quarantineErr
+}
+
+// ListQuarantineRecords returns plugin quarantine records.
+func (a *App) ListQuarantineRecords() ([]model.QuarantineRecord, error) {
+	return cleaner.NewQuarantineStore(cleaner.DefaultQuarantineRoot()).ListRecords()
+}
+
+// RestoreQuarantinedPlugin restores one plugin from quarantine.
+func (a *App) RestoreQuarantinedPlugin(recordID string) (*model.QuarantineResult, error) {
+	start := time.Now()
+	store := cleaner.NewQuarantineStore(cleaner.DefaultQuarantineRoot())
+	result, restoreErr := store.RestorePlugin(recordID)
+	if result == nil {
+		result = &model.QuarantineResult{
+			FailedItems:   make([]string, 0),
+			FailedReasons: make(map[string]string),
+		}
+	}
+	if err := appendQuarantineLog(model.OpRestore, result, time.Since(start).Milliseconds()); err != nil {
+		if restoreErr != nil {
+			return result, fmt.Errorf("%w; record restore operation log: %v", restoreErr, err)
+		}
+		return result, fmt.Errorf("record restore operation log: %w", err)
+	}
+	return result, restoreErr
 }
 
 // GetOperationLogs returns the newest operation log entries first.
@@ -224,6 +278,22 @@ func appendCleanLog(result *model.CleanResult, duration int64) error {
 	entry.FreedSize = result.FreedSize
 	entry.FailedPaths = append(entry.FailedPaths, result.FailedFiles...)
 	for _, path := range result.FailedFiles {
+		entry.FailedReasons = append(entry.FailedReasons, result.FailedReasons[path])
+	}
+	entry.Duration = duration
+	return logger.New(logger.DefaultPath()).Append(*entry)
+}
+
+func appendQuarantineLog(opType string, result *model.QuarantineResult, duration int64) error {
+	entry := model.NewOperationLog(opType)
+	switch opType {
+	case model.OpRestore:
+		entry.DeletedFiles = result.RestoredItems
+	default:
+		entry.DeletedFiles = result.MovedItems
+	}
+	entry.FailedPaths = append(entry.FailedPaths, result.FailedItems...)
+	for _, path := range result.FailedItems {
 		entry.FailedReasons = append(entry.FailedReasons, result.FailedReasons[path])
 	}
 	entry.Duration = duration

@@ -32,6 +32,8 @@ const (
 	OpShred          = "shred"
 	OpRegistryBackup = "registry_backup"
 	OpRegistryDelete = "registry_delete"
+	OpQuarantine     = "quarantine"
+	OpRestore        = "restore"
 )
 
 // Item type constants.
@@ -61,16 +63,49 @@ type CleanRule struct {
 // ScanItem represents a single scannable item discovered during scanning.
 // It may be a file, directory, registry entry, or plugin.
 type ScanItem struct {
-	ID           string `json:"id"`            // Unique identifier: {category}_{path_hash}
-	Path         string `json:"path"`          // Absolute path to the file/item
-	Name         string `json:"name"`          // File name or display name
-	Type         string `json:"type"`          // Type: file, directory, registry, plugin
-	Category     string `json:"category"`      // Category from the parent rule
-	Size         int64  `json:"size"`          // File size in bytes (0 for non-files)
-	Risk         string `json:"risk"`          // Risk level: low, medium, high
-	Source       string `json:"source"`        // Name of the source rule
-	LastModified int64  `json:"last_modified"` // Last modification time as Unix timestamp
-	Selected     bool   `json:"selected"`      // Whether this item is currently selected for cleanup
+	ID           string      `json:"id"`               // Unique identifier: {category}_{path_hash}
+	Path         string      `json:"path"`             // Absolute path to the file/item
+	Name         string      `json:"name"`             // File name or display name
+	Type         string      `json:"type"`             // Type: file, directory, registry, plugin
+	Category     string      `json:"category"`         // Category from the parent rule
+	Size         int64       `json:"size"`             // File size in bytes (0 for non-files)
+	Risk         string      `json:"risk"`             // Risk level: low, medium, high
+	Source       string      `json:"source"`           // Name of the source rule
+	LastModified int64       `json:"last_modified"`    // Last modification time as Unix timestamp
+	Selected     bool        `json:"selected"`         // Whether this item is currently selected for cleanup
+	Plugin       *PluginInfo `json:"plugin,omitempty"` // Manifest metadata for browser plugins
+}
+
+// PluginInfo contains browser extension metadata read from manifest.json.
+type PluginInfo struct {
+	Browser      string `json:"browser"`
+	Profile      string `json:"profile"`
+	ExtensionID  string `json:"extension_id"`
+	Version      string `json:"version"`
+	Description  string `json:"description"`
+	ManifestPath string `json:"manifest_path"`
+}
+
+// QuarantineRecord describes a plugin directory moved into quarantine.
+type QuarantineRecord struct {
+	RecordID       string `json:"record_id"`
+	OriginalPath   string `json:"original_path"`
+	QuarantinePath string `json:"quarantine_path"`
+	Name           string `json:"name"`
+	ItemType       string `json:"item_type"`
+	Browser        string `json:"browser"`
+	CreatedAt      string `json:"created_at"`
+	Size           int64  `json:"size"`
+	RestoredAt     string `json:"restored_at,omitempty"`
+}
+
+// QuarantineResult summarizes plugin quarantine or restore operations.
+type QuarantineResult struct {
+	MovedItems    int               `json:"moved_items"`
+	RestoredItems int               `json:"restored_items"`
+	FailedItems   []string          `json:"failed_items"`
+	FailedReasons map[string]string `json:"failed_reasons"`
+	Message       string            `json:"message"`
 }
 
 // ScanError records a path that could not be scanned and the reason why.

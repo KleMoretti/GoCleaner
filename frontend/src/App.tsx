@@ -7,6 +7,7 @@ import {
   GetRulesPreview,
   GetRulesWarnings,
   Ping,
+  QuarantinePlugins,
   Scan,
 } from '../wailsjs/go/app/App';
 import {
@@ -23,6 +24,7 @@ import type {
   CleanResult,
   CleanRule,
   OperationLog,
+  QuarantineResult,
   RiskLevel,
   ScanItem,
   ScanResult,
@@ -80,6 +82,8 @@ function operationLabel(operation: string): string {
     shred: '粉碎',
     registry_backup: '注册表备份',
     registry_delete: '注册表删除',
+    quarantine: '隔离',
+    restore: '恢复',
   };
   return labels[operation] || operation || '-';
 }
@@ -99,6 +103,7 @@ function App() {
   const [envInfo, setEnvInfo] = useState<Record<string, string>>({});
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [cleanResult, setCleanResult] = useState<CleanResult | null>(null);
+  const [quarantineResult, setQuarantineResult] = useState<QuarantineResult | null>(null);
   const [operationLogs, setOperationLogs] = useState<OperationLog[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRisk, setSelectedRisk] = useState<RiskFilter>('all');
@@ -145,6 +150,7 @@ function App() {
     try {
       setScanning(true);
       setCleanResult(null);
+      setQuarantineResult(null);
       const result = await Scan();
       setScanResult(result as unknown as ScanResult);
       await loadOperationLogs();
@@ -187,9 +193,12 @@ function App() {
 
   const selectionSummary = useMemo(() => summarizeSelection(scanItems), [scanItems]);
   const selectedItems = selectionSummary.items;
+  const selectedCleanItems = selectionSummary.cleanableItems;
+  const selectedPluginItems = selectionSummary.pluginItems;
   const selectedSize = selectionSummary.size;
+  const selectedPluginSize = selectionSummary.pluginSize;
   const selectedRiskCounts = selectionSummary.riskCounts;
-  const hasHighRiskSelection = selectionSummary.hasHighRisk;
+  const hasHighRiskSelection = selectedCleanItems.some((item) => item.risk === 'high');
   const failureSummary = useMemo(
     () => countFailures(scanResult, cleanResult),
     [scanResult, cleanResult],
@@ -198,7 +207,7 @@ function App() {
   function selectVisibleSafeItems() {
     const visibleSafeIds = new Set(
       filteredItems
-        .filter((item) => item.risk !== 'high')
+        .filter((item) => item.risk !== 'high' && item.type !== 'plugin')
         .map((item) => item.id),
     );
     setScanResult((current) => {
@@ -227,14 +236,14 @@ function App() {
   }
 
   async function cleanSelectedItems() {
-    if (selectedItems.length === 0) {
+    if (selectedCleanItems.length === 0) {
       return;
     }
 
     const summary = [
-      `选中项：${selectedItems.length} 项`,
+      `选中项：${selectedCleanItems.length} 项`,
       `预计释放：${formatBytes(selectedSize)}`,
-      `风险构成：低风险 ${selectedRiskCounts.low}，中风险 ${selectedRiskCounts.medium}，高风险 ${selectedRiskCounts.high}`,
+      `风险构成：低风险 ${selectedCleanItems.filter((item) => item.risk === 'low').length}，中风险 ${selectedCleanItems.filter((item) => item.risk === 'medium').length}，高风险 ${selectedCleanItems.filter((item) => item.risk === 'high').length}`,
     ].join('\n');
 
     if (!window.confirm(`确认清理选中文件？\n${summary}`)) {
@@ -247,15 +256,66 @@ function App() {
 
     try {
       setCleaning(true);
-      const result = await Clean(selectedItems as any, hasHighRiskSelection);
+      const result = await Clean(selectedCleanItems as any, hasHighRiskSelection);
       const clean = result as unknown as CleanResult;
       setCleanResult(clean);
+      setQuarantineResult(null);
 
       setScanResult((current) => {
         if (!current) {
           return current;
         }
-        const items = reconcileItemsAfterClean(current.items, selectedItems, clean);
+        const items = reconcileItemsAfterClean(current.items, selectedCleanItems, clean);
+        return {
+          ...current,
+          items,
+          total_files: items.filter((item) => item.type === 'file').length,
+          total_size: items.reduce((total, item) => total + item.size, 0),
+        };
+      });
+
+      await loadOperationLogs();
+      setError(null);
+    } catch (e: any) {
+      setError(errorMessage(e));
+    } finally {
+      setCleaning(false);
+    }
+  }
+
+  async function quarantineSelectedPlugins() {
+    if (selectedPluginItems.length === 0) {
+      return;
+    }
+
+    const summary = [
+      `选中插件：${selectedPluginItems.length} 项`,
+      `插件目录占用：${formatBytes(selectedPluginSize)}`,
+      '操作方式：移动到 data/quarantine/plugins，可从隔离记录恢复，不直接删除。',
+    ].join('\n');
+
+    if (!window.confirm(`确认隔离选中插件？\n${summary}`)) {
+      return;
+    }
+
+    try {
+      setCleaning(true);
+      const result = await QuarantinePlugins(selectedPluginItems as any);
+      const quarantine = result as unknown as QuarantineResult;
+      setQuarantineResult(quarantine);
+      setCleanResult(null);
+
+      setScanResult((current) => {
+        if (!current) {
+          return current;
+        }
+        const failedPaths = new Set(quarantine.failed_items || []);
+        const selectedPluginPaths = new Set(selectedPluginItems.map((item) => item.path));
+        const items = current.items
+          .filter((item) => !(selectedPluginPaths.has(item.path) && !failedPaths.has(item.path)))
+          .map((item) => (
+            failedPaths.has(item.path) ? { ...item, selected: false } : item
+          ));
         return {
           ...current,
           items,
@@ -321,12 +381,16 @@ function App() {
                 <span className="stat-label">{scanResult ? '扫描总大小' : '低/中/高风险规则'}</span>
               </div>
               <div className="stat-item">
-                <span className="stat-value">{selectedItems.length}</span>
+                <span className="stat-value">{selectedCleanItems.length}</span>
                 <span className="stat-label">已勾选项目</span>
               </div>
               <div className="stat-item">
                 <span className="stat-value">{formatBytes(selectedSize)}</span>
                 <span className="stat-label">已勾选大小</span>
+              </div>
+              <div className={`stat-item ${selectedPluginItems.length > 0 ? 'stat-warning' : ''}`}>
+                <span className="stat-value">{selectedPluginItems.length}</span>
+                <span className="stat-label">已选插件（{formatBytes(selectedPluginSize)}）</span>
               </div>
               <div className={`stat-item ${failureSummary.total > 0 ? 'stat-warning' : ''}`}>
                 <span className="stat-value">{failureSummary.total}</span>
@@ -388,8 +452,11 @@ function App() {
                 <button onClick={clearSelection} disabled={selectedItems.length === 0}>
                   清空选择
                 </button>
-                <button className="danger-action" onClick={cleanSelectedItems} disabled={selectedItems.length === 0 || cleaning}>
-                  {cleaning ? '清理中...' : `清理 ${selectedItems.length} 项`}
+                <button className="warning-action" onClick={quarantineSelectedPlugins} disabled={selectedPluginItems.length === 0 || cleaning}>
+                  {cleaning ? '处理中...' : `隔离插件 ${selectedPluginItems.length} 项`}
+                </button>
+                <button className="danger-action" onClick={cleanSelectedItems} disabled={selectedCleanItems.length === 0 || cleaning}>
+                  {cleaning ? '清理中...' : `清理 ${selectedCleanItems.length} 项`}
                 </button>
               </div>
             </section>
@@ -405,6 +472,24 @@ function App() {
                       <li key={path}>
                         <code>{path}</code>
                         <span>{cleanResult.failed_reasons[path]}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
+
+            {quarantineResult && (
+              <section className="result-panel" aria-live="polite">
+                <strong>隔离结果</strong>
+                <span>{quarantineResult.message}</span>
+                <span>已隔离 {quarantineResult.moved_items} 项 | 已恢复 {quarantineResult.restored_items} 项 | 失败 {quarantineResult.failed_items.length} 项</span>
+                {quarantineResult.failed_items.length > 0 && (
+                  <ul>
+                    {quarantineResult.failed_items.map((path) => (
+                      <li key={path}>
+                        <code>{path}</code>
+                        <span>{quarantineResult.failed_reasons[path]}</span>
                       </li>
                     ))}
                   </ul>
@@ -441,7 +526,14 @@ function App() {
                             onChange={(event) => setItemSelected(item.id, event.target.checked)}
                           />
                         </td>
-                        <td>{item.name}</td>
+                        <td>
+                          <div className="item-name">{item.name}</div>
+                          {item.plugin && (
+                            <div className="item-meta">
+                              {item.plugin.browser} / {item.plugin.profile} / v{item.plugin.version || '-'}
+                            </div>
+                          )}
+                        </td>
                         <td>{categoryLabel(item.category)}</td>
                         <td>
                           <span className="risk-tag" style={{ backgroundColor: RiskColors[item.risk] }}>
@@ -450,7 +542,12 @@ function App() {
                         </td>
                         <td>{formatBytes(item.size)}</td>
                         <td>{formatDateFromSeconds(item.last_modified)}</td>
-                        <td>{item.source}</td>
+                        <td>
+                          <div>{item.source}</div>
+                          {item.plugin && (
+                            <div className="item-meta">{item.plugin.extension_id}</div>
+                          )}
+                        </td>
                         <td className="path-cell">{item.path}</td>
                       </tr>
                     ))}
@@ -495,7 +592,7 @@ function App() {
                       <th>时间</th>
                       <th>操作</th>
                       <th>扫描数</th>
-                      <th>删除数</th>
+                      <th>处理数</th>
                       <th>释放空间</th>
                       <th>失败详情</th>
                       <th>耗时</th>

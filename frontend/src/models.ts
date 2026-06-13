@@ -23,6 +23,16 @@ export interface ScanItem {
   source: string;
   last_modified: number;
   selected: boolean;
+  plugin?: PluginInfo;
+}
+
+export interface PluginInfo {
+  browser: string;
+  profile: string;
+  extension_id: string;
+  version: string;
+  description: string;
+  manifest_path: string;
 }
 
 export interface ScanError {
@@ -42,6 +52,26 @@ export interface CleanResult {
   deleted_files: number;
   freed_size: number;
   failed_files: string[];
+  failed_reasons: Record<string, string>;
+  message: string;
+}
+
+export interface QuarantineRecord {
+  record_id: string;
+  original_path: string;
+  quarantine_path: string;
+  name: string;
+  item_type: string;
+  browser: string;
+  created_at: string;
+  size: number;
+  restored_at?: string;
+}
+
+export interface QuarantineResult {
+  moved_items: number;
+  restored_items: number;
+  failed_items: string[];
   failed_reasons: Record<string, string>;
   message: string;
 }

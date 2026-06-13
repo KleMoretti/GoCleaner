@@ -16,4 +16,10 @@ export function GetRulesWarnings():Promise<Array<string>>;
 
 export function Ping():Promise<string>;
 
+export function QuarantinePlugins(arg1:Array<model.ScanItem>):Promise<model.QuarantineResult>;
+
 export function Scan():Promise<model.ScanResult>;
+
+export function ListQuarantineRecords():Promise<Array<model.QuarantineRecord>>;
+
+export function RestoreQuarantinedPlugin(arg1:string):Promise<model.QuarantineResult>;

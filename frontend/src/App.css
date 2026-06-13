@@ -102,6 +102,16 @@ button:disabled {
   background: #bd4848;
 }
 
+.warning-action {
+  color: #ffffff;
+  background: #8a6518;
+  border-color: #b7791f;
+}
+
+.warning-action:hover:not(:disabled) {
+  background: #9a7320;
+}
+
 .app-main {
   width: 100%;
   max-width: 1440px;
@@ -389,6 +399,19 @@ button:disabled {
   color: #ffffff;
   font-size: 12px;
   font-weight: 800;
+}
+
+.item-name {
+  font-weight: 700;
+  color: #f0ede7;
+}
+
+.item-meta {
+  margin-top: 3px;
+  color: #98a2ad;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .path-cell {

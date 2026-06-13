@@ -30,6 +30,18 @@ export function Ping() {
   return window['go']['app']['App']['Ping']();
 }
 
+export function QuarantinePlugins(arg1) {
+  return window['go']['app']['App']['QuarantinePlugins'](arg1);
+}
+
 export function Scan() {
   return window['go']['app']['App']['Scan']();
+}
+
+export function ListQuarantineRecords() {
+  return window['go']['app']['App']['ListQuarantineRecords']();
+}
+
+export function RestoreQuarantinedPlugin(arg1) {
+  return window['go']['app']['App']['RestoreQuarantinedPlugin'](arg1);
 }

@@ -26,6 +26,29 @@ function item(id: string, selected: boolean, risk: ScanItem['risk'], size: numbe
   };
 }
 
+function pluginItem(id: string, selected: boolean, size: number): ScanItem {
+  return {
+    id,
+    path: `C:/Users/test/AppData/Local/Browser/User Data/Default/Extensions/${id}`,
+    name: 'Test Plugin',
+    type: 'plugin',
+    category: 'plugin',
+    size,
+    risk: 'medium',
+    source: 'Chrome 插件',
+    last_modified: 0,
+    selected,
+    plugin: {
+      browser: 'Chrome',
+      profile: 'Default',
+      extension_id: id,
+      version: '1.0.0',
+      description: 'fixture',
+      manifest_path: `C:/manifest/${id}/manifest.json`,
+    },
+  };
+}
+
 const scanItems = [
   item('low', true, 'low', 10, 'C:/tmp/low.tmp'),
   item('medium', true, 'medium', 20, 'C:/tmp/medium.tmp'),
@@ -40,6 +63,13 @@ assert(selection.riskCounts.low === 1, 'low risk selected count should be 1');
 assert(selection.riskCounts.medium === 1, 'medium risk selected count should be 1');
 assert(selection.riskCounts.high === 0, 'high risk selected count should be 0');
 assert(selection.hasHighRisk === false, 'high risk flag should be false without selected high-risk items');
+
+const pluginSelection = summarizeSelection([
+  item('file-selected', true, 'low', 10, 'C:/tmp/file.tmp'),
+  pluginItem('plugin-selected', true, 500),
+]);
+assert(pluginSelection.items.length === 2, 'selected plugin should still be part of selected items');
+assert(pluginSelection.size === 10, 'selected plugin size should not count as releasable clean size');
 
 const scanResult: ScanResult = {
   items: scanItems,
