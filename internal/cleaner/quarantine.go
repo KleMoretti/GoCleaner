@@ -116,6 +116,9 @@ func (s *QuarantineStore) RestorePlugin(recordID string) (*model.QuarantineResul
 
 	records[index].RestoredAt = time.Now().Format(time.RFC3339)
 	if err := s.writeRecords(records); err != nil {
+		if rollbackErr := os.Rename(record.OriginalPath, record.QuarantinePath); rollbackErr != nil {
+			return result, fmt.Errorf("write restore record failed: %w; rollback failed: %v", err, rollbackErr)
+		}
 		return result, err
 	}
 
@@ -159,10 +162,6 @@ func (s *QuarantineStore) quarantinePlugin(item model.ScanItem) error {
 	}
 
 	size := quarantineDirectorySize(item.Path)
-	if err := os.Rename(item.Path, contentPath); err != nil {
-		return fmt.Errorf("move to quarantine failed: %w", err)
-	}
-
 	record := model.QuarantineRecord{
 		RecordID:       recordID,
 		OriginalPath:   item.Path,
@@ -177,6 +176,13 @@ func (s *QuarantineStore) quarantinePlugin(item model.ScanItem) error {
 	}
 	if err := s.appendRecord(record); err != nil {
 		return fmt.Errorf("write quarantine record failed: %w", err)
+	}
+	if err := os.Rename(item.Path, contentPath); err != nil {
+		if cleanupErr := s.removeRecord(recordID); cleanupErr != nil {
+			return fmt.Errorf("move to quarantine failed: %w; cleanup record failed: %v", err, cleanupErr)
+		}
+		_ = os.Remove(recordDir)
+		return fmt.Errorf("move to quarantine failed: %w", err)
 	}
 
 	return nil
@@ -243,6 +249,20 @@ func (s *QuarantineStore) appendRecord(record model.QuarantineRecord) error {
 	return nil
 }
 
+func (s *QuarantineStore) removeRecord(recordID string) error {
+	records, err := s.readRecords()
+	if err != nil {
+		return err
+	}
+	filtered := records[:0]
+	for _, record := range records {
+		if record.RecordID != recordID {
+			filtered = append(filtered, record)
+		}
+	}
+	return s.writeRecords(filtered)
+}
+
 func (s *QuarantineStore) readRecords() ([]model.QuarantineRecord, error) {
 	f, err := os.Open(s.indexPath())
 	if err != nil {
@@ -276,19 +296,32 @@ func (s *QuarantineStore) writeRecords(records []model.QuarantineRecord) error {
 	if err := os.MkdirAll(s.root, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(s.indexPath(), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	indexPath := s.indexPath()
+	tmpPath := fmt.Sprintf("%s.tmp.%d", indexPath, time.Now().UnixNano())
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	for _, record := range records {
 		encoded, err := json.Marshal(record)
 		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmpPath)
 			return err
 		}
 		if _, err := f.Write(append(encoded, '\n')); err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmpPath)
 			return err
 		}
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := replaceFile(tmpPath, indexPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
 	}
 	return nil
 }

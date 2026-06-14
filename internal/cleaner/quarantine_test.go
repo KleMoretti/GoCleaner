@@ -89,6 +89,31 @@ func TestQuarantinePluginsMovesSelectedPluginAndRestoreReturnsIt(t *testing.T) {
 	}
 }
 
+func TestQuarantinePluginsDoesNotMoveWhenRecordWriteFails(t *testing.T) {
+	workDir := t.TempDir()
+	pluginPath := makePluginDir(t, workDir)
+	quarantineRoot := filepath.Join(workDir, "data", "quarantine", "plugins")
+	if err := os.MkdirAll(filepath.Join(quarantineRoot, "index.jsonl"), 0o755); err != nil {
+		t.Fatalf("MkdirAll index sentinel: %v", err)
+	}
+	store := NewQuarantineStore(quarantineRoot)
+
+	result, err := store.QuarantinePlugins([]model.ScanItem{pluginItem(pluginPath)})
+	if err != nil {
+		t.Fatalf("QuarantinePlugins returned error: %v", err)
+	}
+	if result.MovedItems != 0 || len(result.FailedItems) != 1 {
+		t.Fatalf("Quarantine result = %+v, want record failure", result)
+	}
+	if _, statErr := os.Stat(filepath.Join(pluginPath, "1.0.0", "manifest.json")); statErr != nil {
+		t.Fatalf("plugin should remain at original path after record failure: %v", statErr)
+	}
+	records, recordsErr := store.ListRecords()
+	if recordsErr == nil && len(records) != 0 {
+		t.Fatalf("records = %+v, want none after failed quarantine", records)
+	}
+}
+
 func TestQuarantinePluginsRejectsNonPluginItem(t *testing.T) {
 	workDir := t.TempDir()
 	filePath := writeTestFile(t, workDir, "cache.tmp", "hello")

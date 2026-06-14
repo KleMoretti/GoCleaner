@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gocleaner/internal/model"
 	"gocleaner/internal/windows"
@@ -74,6 +75,33 @@ func TestWriteRegistryBackupEncodesExpandStringValues(t *testing.T) {
 	}
 	if !strings.Contains(text, "25,00,55,00,53,00,45,00,52,00") {
 		t.Fatalf("hex(2) data should contain UTF-16LE bytes for %%USER: %q", text)
+	}
+}
+
+func TestWriteRegistryBackupDoesNotOverwriteExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "backup.reg")
+	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+		t.Fatalf("WriteFile existing backup: %v", err)
+	}
+
+	err := WriteRegistryBackup(path, []model.ScanItem{})
+	if err == nil {
+		t.Fatal("WriteRegistryBackup error = nil, want existing-file error")
+	}
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("ReadFile backup: %v", readErr)
+	}
+	if string(raw) != "original" {
+		t.Fatalf("backup content = %q, want original preserved", raw)
+	}
+}
+
+func TestRegistryBackupPathIncludesSubsecondPrecision(t *testing.T) {
+	now := time.Date(2026, 6, 14, 15, 4, 5, 123456789, time.Local)
+	path := registryBackupPath("backup", now)
+	if !strings.Contains(path, "registry_backup_20260614_150405_123456789.reg") {
+		t.Fatalf("backup path = %q, want nanosecond precision", path)
 	}
 }
 

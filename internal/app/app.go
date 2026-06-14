@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"gocleaner/internal/cleaner"
@@ -23,8 +24,10 @@ import (
 // App is the main application struct. Its methods are automatically
 // bound to the Wails frontend via the Bind option in main.go.
 type App struct {
-	ctx           context.Context
-	embeddedRules []byte // Embedded fallback rules from the binary
+	ctx             context.Context
+	embeddedRules   []byte // Embedded fallback rules from the binary
+	authorizedMu    sync.RWMutex
+	authorizedItems map[string]model.ScanItem
 }
 
 const scanProgressEvent = "gocleaner:scan-progress"
@@ -33,7 +36,8 @@ const scanProgressEvent = "gocleaner:scan-progress"
 // default cleaner_rules.json embedded into the binary at build time.
 func New(embeddedRules []byte) *App {
 	return &App{
-		embeddedRules: embeddedRules,
+		embeddedRules:   embeddedRules,
+		authorizedItems: make(map[string]model.ScanItem),
 	}
 }
 
@@ -116,6 +120,7 @@ func (a *App) Scan() (*model.ScanResult, error) {
 		result.TotalSize += item.Size
 	}
 	result.Duration = time.Since(start).Milliseconds()
+	a.replaceAuthorizedItems(result.Items)
 	a.emitScanProgress(model.ScanProgress{
 		Phase:          model.ScanPhaseDone,
 		CurrentLabel:   "扫描完成",
@@ -134,7 +139,8 @@ func (a *App) Scan() (*model.ScanResult, error) {
 // Clean executes deletion for frontend-selected scan items.
 func (a *App) Clean(items []model.ScanItem, highRiskConfirmed bool) (*model.CleanResult, error) {
 	start := time.Now()
-	result, cleanErr := cleaner.Clean(items, cleaner.Options{
+	authorized, rejected := a.authorizeSelectedItems(items, model.TypeFile)
+	result, cleanErr := cleaner.Clean(authorized, cleaner.Options{
 		HighRiskConfirmed: highRiskConfirmed,
 	})
 	if result == nil {
@@ -143,12 +149,13 @@ func (a *App) Clean(items []model.ScanItem, highRiskConfirmed bool) (*model.Clea
 			FailedReasons: make(map[string]string),
 		}
 	}
+	addCleanFailures(result, rejected)
+	if len(rejected) > 0 || cleanErr == nil {
+		refreshCleanMessage(result)
+	}
 
 	if err := appendCleanLog(result, time.Since(start).Milliseconds()); err != nil {
-		if cleanErr != nil {
-			return result, fmt.Errorf("%w; record clean operation log: %v", cleanErr, err)
-		}
-		return result, fmt.Errorf("record clean operation log: %w", err)
+		addCleanWarning(result, err)
 	}
 
 	return result, cleanErr
@@ -158,19 +165,19 @@ func (a *App) Clean(items []model.ScanItem, highRiskConfirmed bool) (*model.Clea
 func (a *App) QuarantinePlugins(items []model.ScanItem) (*model.QuarantineResult, error) {
 	start := time.Now()
 	store := cleaner.NewQuarantineStore(cleaner.DefaultQuarantineRoot())
-	result, quarantineErr := store.QuarantinePlugins(items)
+	authorized, rejected := a.authorizeSelectedItems(items, model.TypePlugin)
+	result, quarantineErr := store.QuarantinePlugins(authorized)
 	if result == nil {
 		result = &model.QuarantineResult{
 			FailedItems:   make([]string, 0),
 			FailedReasons: make(map[string]string),
 		}
 	}
+	addQuarantineFailures(result, rejected)
+	refreshQuarantineMessage(result)
 
 	if err := appendQuarantineLog(model.OpQuarantine, result, time.Since(start).Milliseconds()); err != nil {
-		if quarantineErr != nil {
-			return result, fmt.Errorf("%w; record quarantine operation log: %v", quarantineErr, err)
-		}
-		return result, fmt.Errorf("record quarantine operation log: %w", err)
+		addQuarantineWarning(result, err)
 	}
 	return result, quarantineErr
 }
@@ -192,10 +199,7 @@ func (a *App) RestoreQuarantinedPlugin(recordID string) (*model.QuarantineResult
 		}
 	}
 	if err := appendQuarantineLog(model.OpRestore, result, time.Since(start).Milliseconds()); err != nil {
-		if restoreErr != nil {
-			return result, fmt.Errorf("%w; record restore operation log: %v", restoreErr, err)
-		}
-		return result, fmt.Errorf("record restore operation log: %w", err)
+		addQuarantineWarning(result, err)
 	}
 	return result, restoreErr
 }
@@ -223,24 +227,27 @@ func (a *App) ScanInvalidStartupRegistry() (*model.ScanResult, error) {
 	if err := appendScanLog(result); err != nil {
 		return result, fmt.Errorf("record registry scan operation log: %w", err)
 	}
+	a.replaceAuthorizedItemsOfType(model.TypeRegistry, result.Items)
 	return result, nil
 }
 
 // DeleteRegistryItems backs up selected registry values before deleting them.
 func (a *App) DeleteRegistryItems(items []model.ScanItem, confirmed bool) (*model.RegistryActionResult, error) {
 	start := time.Now()
-	result, deleteErr := registryops.DeleteRegistryItems(items, confirmed)
+	authorized, rejected := a.authorizeSelectedItems(items, model.TypeRegistry)
+	result, deleteErr := registryops.DeleteRegistryItems(authorized, confirmed)
 	if result == nil {
 		result = &model.RegistryActionResult{
 			FailedItems:   make([]string, 0),
 			FailedReasons: make(map[string]string),
 		}
 	}
+	addRegistryFailures(result, rejected)
+	if len(rejected) > 0 || deleteErr == nil {
+		refreshRegistryMessage(result)
+	}
 	if err := appendRegistryActionLog(result, time.Since(start).Milliseconds()); err != nil {
-		if deleteErr != nil {
-			return result, fmt.Errorf("%w; record registry operation log: %v", deleteErr, err)
-		}
-		return result, fmt.Errorf("record registry operation log: %w", err)
+		addRegistryWarning(result, err)
 	}
 	return result, deleteErr
 }
@@ -266,10 +273,7 @@ func (a *App) ShredFile(request model.ShredRequest, confirmed bool) (*model.Shre
 		}
 	}
 	if err := appendShredLog(result, time.Since(start).Milliseconds()); err != nil {
-		if shredErr != nil {
-			return result, fmt.Errorf("%w; record shred operation log: %v", shredErr, err)
-		}
-		return result, fmt.Errorf("record shred operation log: %w", err)
+		addShredWarning(result, err)
 	}
 	return result, shredErr
 }
@@ -367,6 +371,150 @@ func (a *App) GetRuleCategories() ([]string, error) {
 		}
 	}
 	return categories, nil
+}
+
+type authorizationFailure struct {
+	Path   string
+	Reason string
+}
+
+func (a *App) replaceAuthorizedItems(items []model.ScanItem) {
+	a.authorizedMu.Lock()
+	defer a.authorizedMu.Unlock()
+
+	a.authorizedItems = make(map[string]model.ScanItem, len(items))
+	for _, item := range items {
+		if item.ID == "" {
+			continue
+		}
+		a.authorizedItems[item.ID] = item
+	}
+}
+
+func (a *App) replaceAuthorizedItemsOfType(itemType string, items []model.ScanItem) {
+	a.authorizedMu.Lock()
+	defer a.authorizedMu.Unlock()
+
+	if a.authorizedItems == nil {
+		a.authorizedItems = make(map[string]model.ScanItem, len(items))
+	}
+	for id, item := range a.authorizedItems {
+		if item.Type == itemType {
+			delete(a.authorizedItems, id)
+		}
+	}
+	for _, item := range items {
+		if item.ID == "" {
+			continue
+		}
+		a.authorizedItems[item.ID] = item
+	}
+}
+
+func (a *App) authorizeSelectedItems(items []model.ScanItem, requiredType string) ([]model.ScanItem, []authorizationFailure) {
+	a.authorizedMu.RLock()
+	defer a.authorizedMu.RUnlock()
+
+	authorized := make([]model.ScanItem, 0, len(items))
+	rejected := make([]authorizationFailure, 0)
+	for _, request := range items {
+		if !request.Selected {
+			continue
+		}
+		stored, ok := a.authorizedItems[request.ID]
+		if !ok {
+			rejected = append(rejected, authorizationFailure{
+				Path:   failurePath(request),
+				Reason: "item was not produced by latest scan; run scan again before cleaning",
+			})
+			continue
+		}
+		if stored.Type != requiredType {
+			rejected = append(rejected, authorizationFailure{
+				Path:   failurePath(request),
+				Reason: fmt.Sprintf("item type %s is not allowed for this operation", stored.Type),
+			})
+			continue
+		}
+		stored.Selected = true
+		authorized = append(authorized, stored)
+	}
+	return authorized, rejected
+}
+
+func failurePath(item model.ScanItem) string {
+	if item.Path != "" {
+		return item.Path
+	}
+	if item.ID != "" {
+		return item.ID
+	}
+	return "<unknown item>"
+}
+
+func addCleanFailures(result *model.CleanResult, failures []authorizationFailure) {
+	for _, failure := range failures {
+		result.FailedFiles = append(result.FailedFiles, failure.Path)
+		result.FailedReasons[failure.Path] = failure.Reason
+	}
+}
+
+func refreshCleanMessage(result *model.CleanResult) {
+	result.Message = fmt.Sprintf("Deleted %d file(s), freed %d byte(s), failed %d item(s).",
+		result.DeletedFiles,
+		result.FreedSize,
+		len(result.FailedFiles),
+	)
+}
+
+func addQuarantineFailures(result *model.QuarantineResult, failures []authorizationFailure) {
+	for _, failure := range failures {
+		result.FailedItems = append(result.FailedItems, failure.Path)
+		result.FailedReasons[failure.Path] = failure.Reason
+	}
+}
+
+func refreshQuarantineMessage(result *model.QuarantineResult) {
+	result.Message = fmt.Sprintf("Moved %d plugin(s) to quarantine, restored %d plugin(s), failed %d item(s).",
+		result.MovedItems,
+		result.RestoredItems,
+		len(result.FailedItems),
+	)
+}
+
+func addRegistryFailures(result *model.RegistryActionResult, failures []authorizationFailure) {
+	for _, failure := range failures {
+		result.FailedItems = append(result.FailedItems, failure.Path)
+		result.FailedReasons[failure.Path] = failure.Reason
+	}
+}
+
+func refreshRegistryMessage(result *model.RegistryActionResult) {
+	result.Message = fmt.Sprintf("Deleted %d registry value(s), backup: %s, failed %d item(s).",
+		result.DeletedValues,
+		result.BackupPath,
+		len(result.FailedItems),
+	)
+}
+
+func addCleanWarning(result *model.CleanResult, err error) {
+	result.Warnings = append(result.Warnings, logWarning(err))
+}
+
+func addQuarantineWarning(result *model.QuarantineResult, err error) {
+	result.Warnings = append(result.Warnings, logWarning(err))
+}
+
+func addRegistryWarning(result *model.RegistryActionResult, err error) {
+	result.Warnings = append(result.Warnings, logWarning(err))
+}
+
+func addShredWarning(result *model.ShredResult, err error) {
+	result.Warnings = append(result.Warnings, logWarning(err))
+}
+
+func logWarning(err error) string {
+	return "operation completed but operation log was not recorded: " + err.Error()
 }
 
 func appendScanLog(result *model.ScanResult) error {

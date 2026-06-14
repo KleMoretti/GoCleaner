@@ -83,3 +83,24 @@ func TestReadRecentMissingFileReturnsEmpty(t *testing.T) {
 		t.Fatalf("ReadRecent len = %d, want 0", len(got))
 	}
 }
+
+func TestReadRecentSkipsMalformedJSONLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.jsonl")
+	goodOld := `{"timestamp":"2026-06-11T10:00:00+08:00","operation":"scan","scanned_files":1}`
+	goodNew := `{"timestamp":"2026-06-11T10:01:00+08:00","operation":"clean","deleted_files":1}`
+	content := strings.Join([]string{goodOld, "{broken json", goodNew}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile log: %v", err)
+	}
+
+	got, err := New(path).ReadRecent(10)
+	if err != nil {
+		t.Fatalf("ReadRecent returned error for one bad line: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ReadRecent len = %d, want 2 valid entries", len(got))
+	}
+	if got[0].Operation != model.OpClean || got[1].Operation != model.OpScan {
+		t.Fatalf("operations = %q, %q; want clean, scan", got[0].Operation, got[1].Operation)
+	}
+}

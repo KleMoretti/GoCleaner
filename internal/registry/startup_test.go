@@ -33,6 +33,11 @@ func TestParseStartupCommandExtractsExecutablePath(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "ambiguous unquoted path with spaces is ignored",
+			raw:  `C:\Program Files\App\app.exe /silent`,
+			ok:   false,
+		},
+		{
 			name: "relative command is ignored",
 			raw:  `OneDrive.exe /background`,
 			ok:   false,

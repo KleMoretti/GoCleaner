@@ -139,6 +139,20 @@ function resultPanelClass(outcome: ReturnType<typeof describeCleanOutcome>): str
   return `result-panel ${outcome ? `result-${outcome}` : ''}`;
 }
 
+function WarningList({ warnings }: { warnings?: string[] }) {
+  const visibleWarnings = (warnings || []).filter(Boolean);
+  if (visibleWarnings.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="result-warning-list">
+      {visibleWarnings.map((warning) => (
+        <li key={warning}>{warning}</li>
+      ))}
+    </ul>
+  );
+}
+
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -880,6 +894,7 @@ function App() {
                 <strong>清理结果</strong>
                 <span className="result-state">{outcomeLabel(cleanOutcome)}</span>
                 <span>{cleanResult.message}</span>
+                <WarningList warnings={cleanResult.warnings} />
                 <span>已删除 {cleanResult.deleted_files} 项 | 释放 {formatBytes(cleanResult.freed_size)} | 失败 {cleanResult.failed_files.length} 项</span>
                 {cleanHasPermissionFailure && (
                   <span className="recovery-hint">存在权限不足项：可跳过该项，或确认文件不重要后以管理员身份运行；程序不会自动提权。</span>
@@ -902,6 +917,7 @@ function App() {
                 <strong>隔离结果</strong>
                 <span className="result-state">{outcomeLabel(quarantineOutcome)}</span>
                 <span>{quarantineResult.message}</span>
+                <WarningList warnings={quarantineResult.warnings} />
                 <span>已隔离 {quarantineResult.moved_items} 项 | 已恢复 {quarantineResult.restored_items} 项 | 失败 {quarantineResult.failed_items.length} 项</span>
                 {quarantineHasPermissionFailure && (
                   <span className="recovery-hint">存在权限不足项：请关闭占用该插件目录的浏览器，必要时以管理员身份运行后重试。</span>
@@ -924,6 +940,7 @@ function App() {
                 <strong>注册表结果</strong>
                 <span className="result-state">{outcomeLabel(registryOutcome)}</span>
                 <span>{registryResult.message}</span>
+                <WarningList warnings={registryResult.warnings} />
                 <span>已删除 {registryResult.deleted_values} 项 | 备份 {registryResult.backup_path || '-'} | 失败 {registryResult.failed_items.length} 项</span>
                 {registryHasPermissionFailure && (
                   <span className="recovery-hint">存在权限不足项：当前版本只处理 HKCU 安全范围，不会尝试全注册表修复或静默跳过。</span>
@@ -946,6 +963,7 @@ function App() {
                 <strong>粉碎结果</strong>
                 <span className="result-state">{outcomeLabel(shredOutcome)}</span>
                 <span>{shredResult.message}</span>
+                <WarningList warnings={shredResult.warnings} />
                 <span>已粉碎 {shredResult.shredded_files} 项 | 释放 {formatBytes(shredResult.freed_size)} | 失败 {shredResult.failed_files.length} 项</span>
                 {shredHasPermissionFailure && (
                   <span className="recovery-hint">存在权限不足项：请确认文件未被系统或同步程序占用，必要时选择测试文件演示粉碎流程。</span>

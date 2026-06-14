@@ -99,6 +99,9 @@ func ParseStartupCommand(raw string) (string, bool) {
 			return "", false
 		}
 		candidate = fields[0]
+		if len(fields) > 1 && looksLikeAmbiguousUnquotedPath(candidate) {
+			return "", false
+		}
 	}
 
 	candidate = strings.TrimSpace(candidate)
@@ -115,6 +118,14 @@ func ParseStartupCommand(raw string) (string, bool) {
 		return "", false
 	}
 	return expanded, true
+}
+
+func looksLikeAmbiguousUnquotedPath(candidate string) bool {
+	expanded := windows.ExpandPath(strings.Trim(candidate, `"`))
+	if strings.Contains(expanded, "%") || !filepath.IsAbs(expanded) {
+		return false
+	}
+	return filepath.Ext(expanded) == ""
 }
 
 func fileExists(path string) bool {
@@ -158,7 +169,7 @@ func DeleteRegistryItemsWithBackupDir(items []model.ScanItem, confirmed bool, ba
 		return result, nil
 	}
 
-	backupPath := filepath.Join(backupDir, fmt.Sprintf("registry_backup_%s.reg", time.Now().Format("20060102_150405")))
+	backupPath := registryBackupPath(backupDir, time.Now())
 	if err := WriteRegistryBackup(backupPath, supported); err != nil {
 		for _, item := range supported {
 			recordRegistryFailure(result, item.Path, "registry backup failed: "+err.Error())
@@ -182,6 +193,11 @@ func DeleteRegistryItemsWithBackupDir(items []model.ScanItem, confirmed bool, ba
 		len(result.FailedItems),
 	)
 	return result, nil
+}
+
+func registryBackupPath(backupDir string, now time.Time) string {
+	name := fmt.Sprintf("registry_backup_%s_%09d.reg", now.Format("20060102_150405"), now.Nanosecond())
+	return filepath.Join(backupDir, name)
 }
 
 func selectedRegistryItems(items []model.ScanItem) []model.ScanItem {
@@ -237,7 +253,15 @@ func WriteRegistryBackup(path string, items []model.ScanItem) error {
 		b.WriteString("\r\n")
 	}
 
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.Write([]byte(b.String())); err != nil {
+		return err
+	}
+	return nil
 }
 
 func escapeRegString(value string) string {

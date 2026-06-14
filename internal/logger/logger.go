@@ -78,7 +78,7 @@ func (s *Store) ReadRecent(limit int) ([]model.OperationLog, error) {
 
 		var entry model.OperationLog
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return nil, err
+			continue
 		}
 		entries = append(entries, entry)
 	}

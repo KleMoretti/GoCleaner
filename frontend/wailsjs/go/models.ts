@@ -6,6 +6,7 @@ export namespace model {
 	    failed_files: string[];
 	    failed_reasons: Record<string, string>;
 	    message: string;
+	    warnings?: string[];
 
 	    static createFrom(source: any = {}) {
 	        return new CleanResult(source);
@@ -18,6 +19,7 @@ export namespace model {
 	        this.failed_files = source["failed_files"];
 	        this.failed_reasons = source["failed_reasons"];
 	        this.message = source["message"];
+	        this.warnings = source["warnings"];
 	    }
 	}
 	export class CleanRule {
@@ -100,6 +102,7 @@ export namespace model {
 	    failed_items: string[];
 	    failed_reasons: Record<string, string>;
 	    message: string;
+	    warnings?: string[];
 
 	    static createFrom(source: any = {}) {
 	        return new RegistryActionResult(source);
@@ -112,6 +115,7 @@ export namespace model {
 	        this.failed_items = source["failed_items"];
 	        this.failed_reasons = source["failed_reasons"];
 	        this.message = source["message"];
+	        this.warnings = source["warnings"];
 	    }
 	}
 	export class RegistryInfo {
@@ -174,6 +178,7 @@ export namespace model {
 	    failed_items: string[];
 	    failed_reasons: Record<string, string>;
 	    message: string;
+	    warnings?: string[];
 
 	    static createFrom(source: any = {}) {
 	        return new QuarantineResult(source);
@@ -186,6 +191,7 @@ export namespace model {
 	        this.failed_items = source["failed_items"];
 	        this.failed_reasons = source["failed_reasons"];
 	        this.message = source["message"];
+	        this.warnings = source["warnings"];
 	    }
 	}
 	export class ScanError {
@@ -312,6 +318,7 @@ export namespace model {
 	    failed_files: string[];
 	    failed_reasons: Record<string, string>;
 	    message: string;
+	    warnings?: string[];
 
 	    static createFrom(source: any = {}) {
 	        return new ShredResult(source);
@@ -324,6 +331,7 @@ export namespace model {
 	        this.failed_files = source["failed_files"];
 	        this.failed_reasons = source["failed_reasons"];
 	        this.message = source["message"];
+	        this.warnings = source["warnings"];
 	    }
 	}
 

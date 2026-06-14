@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gocleaner/internal/model"
@@ -41,6 +42,10 @@ func appTestItem(path string, selected bool, risk string) model.ScanItem {
 	}
 }
 
+func rememberAppTestItem(a *App, item model.ScanItem) {
+	a.replaceAuthorizedItems([]model.ScanItem{item})
+}
+
 func TestAppCleanDeletesFileAndWritesOperationLog(t *testing.T) {
 	dir := withTempWorkingDir(t)
 	path := filepath.Join(dir, "delete.tmp")
@@ -49,7 +54,9 @@ func TestAppCleanDeletesFileAndWritesOperationLog(t *testing.T) {
 	}
 
 	a := New(nil)
-	result, err := a.Clean([]model.ScanItem{appTestItem(path, true, model.RiskLow)}, false)
+	item := appTestItem(path, true, model.RiskLow)
+	rememberAppTestItem(a, item)
+	result, err := a.Clean([]model.ScanItem{item}, false)
 	if err != nil {
 		t.Fatalf("Clean returned error: %v", err)
 	}
@@ -69,6 +76,88 @@ func TestAppCleanDeletesFileAndWritesOperationLog(t *testing.T) {
 	}
 }
 
+func TestAppCleanRejectsItemsNotProducedByLatestScan(t *testing.T) {
+	dir := withTempWorkingDir(t)
+	path := filepath.Join(dir, "forged.tmp")
+	if err := os.WriteFile(path, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	a := New(nil)
+	result, err := a.Clean([]model.ScanItem{appTestItem(path, true, model.RiskLow)}, false)
+	if err != nil {
+		t.Fatalf("Clean returned error: %v", err)
+	}
+	if result.DeletedFiles != 0 {
+		t.Fatalf("DeletedFiles = %d, want 0 for unscanned item", result.DeletedFiles)
+	}
+	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[path], "latest scan") {
+		t.Fatalf("unauthorized clean result = %+v", result)
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("unscanned file should remain: %v", statErr)
+	}
+}
+
+func TestAppCleanUsesAuthorizedScanItemInsteadOfFrontendPath(t *testing.T) {
+	dir := withTempWorkingDir(t)
+	scannedPath := filepath.Join(dir, "scanned.tmp")
+	forgedPath := filepath.Join(dir, "forged.tmp")
+	if err := os.WriteFile(scannedPath, []byte("safe"), 0o600); err != nil {
+		t.Fatalf("WriteFile scanned: %v", err)
+	}
+	if err := os.WriteFile(forgedPath, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("WriteFile forged: %v", err)
+	}
+
+	a := New(nil)
+	authorized := appTestItem(scannedPath, false, model.RiskLow)
+	rememberAppTestItem(a, authorized)
+
+	request := authorized
+	request.Path = forgedPath
+	request.Selected = true
+	result, err := a.Clean([]model.ScanItem{request}, false)
+	if err != nil {
+		t.Fatalf("Clean returned error: %v", err)
+	}
+	if result.DeletedFiles != 1 {
+		t.Fatalf("DeletedFiles = %d, want 1 authorized deletion", result.DeletedFiles)
+	}
+	if _, statErr := os.Stat(scannedPath); !os.IsNotExist(statErr) {
+		t.Fatalf("authorized scanned path should be deleted, stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(forgedPath); statErr != nil {
+		t.Fatalf("forged frontend path should remain: %v", statErr)
+	}
+}
+
+func TestAppCleanReturnsResultWhenOperationLogFailsAfterDeletion(t *testing.T) {
+	dir := withTempWorkingDir(t)
+	path := filepath.Join(dir, "delete-with-log-failure.tmp")
+	if err := os.WriteFile(path, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	a := New(nil)
+	item := appTestItem(path, true, model.RiskLow)
+	rememberAppTestItem(a, item)
+	if err := os.WriteFile("data", []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile data sentinel: %v", err)
+	}
+
+	result, err := a.Clean([]model.ScanItem{item}, false)
+	if err != nil {
+		t.Fatalf("Clean should return result without rejecting after deletion; error = %v", err)
+	}
+	if result.DeletedFiles != 1 || len(result.Warnings) != 1 {
+		t.Fatalf("Clean result = %+v, want deletion plus log warning", result)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("file should be deleted despite log failure, stat err = %v", statErr)
+	}
+}
+
 func TestAppCleanHighRiskWithoutConfirmationDoesNotDelete(t *testing.T) {
 	dir := withTempWorkingDir(t)
 	path := filepath.Join(dir, "high-risk.tmp")
@@ -77,7 +166,9 @@ func TestAppCleanHighRiskWithoutConfirmationDoesNotDelete(t *testing.T) {
 	}
 
 	a := New(nil)
-	result, err := a.Clean([]model.ScanItem{appTestItem(path, true, model.RiskHigh)}, false)
+	item := appTestItem(path, true, model.RiskHigh)
+	rememberAppTestItem(a, item)
+	result, err := a.Clean([]model.ScanItem{item}, false)
 	if err == nil {
 		t.Fatal("Clean error = nil, want high-risk confirmation error")
 	}

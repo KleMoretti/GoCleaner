@@ -83,6 +83,7 @@ export interface CleanResult {
   failed_files: string[];
   failed_reasons: Record<string, string>;
   message: string;
+  warnings?: string[];
 }
 
 export interface QuarantineRecord {
@@ -103,6 +104,7 @@ export interface QuarantineResult {
   failed_items: string[];
   failed_reasons: Record<string, string>;
   message: string;
+  warnings?: string[];
 }
 
 export interface RegistryActionResult {
@@ -111,6 +113,7 @@ export interface RegistryActionResult {
   failed_items: string[];
   failed_reasons: Record<string, string>;
   message: string;
+  warnings?: string[];
 }
 
 export interface ShredRequest {
@@ -124,6 +127,7 @@ export interface ShredResult {
   failed_files: string[];
   failed_reasons: Record<string, string>;
   message: string;
+  warnings?: string[];
 }
 
 export interface OperationLog {

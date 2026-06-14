@@ -117,6 +117,7 @@ type QuarantineResult struct {
 	FailedItems   []string          `json:"failed_items"`
 	FailedReasons map[string]string `json:"failed_reasons"`
 	Message       string            `json:"message"`
+	Warnings      []string          `json:"warnings,omitempty"`
 }
 
 // RegistryInfo describes one invalid registry value found during registry scanning.
@@ -138,6 +139,7 @@ type RegistryActionResult struct {
 	FailedItems   []string          `json:"failed_items"`
 	FailedReasons map[string]string `json:"failed_reasons"`
 	Message       string            `json:"message"`
+	Warnings      []string          `json:"warnings,omitempty"`
 }
 
 // ShredRequest describes one explicit user-selected file shred operation.
@@ -153,6 +155,7 @@ type ShredResult struct {
 	FailedFiles   []string          `json:"failed_files"`
 	FailedReasons map[string]string `json:"failed_reasons"`
 	Message       string            `json:"message"`
+	Warnings      []string          `json:"warnings,omitempty"`
 }
 
 // ScanError records a path that could not be scanned and the reason why.
@@ -188,6 +191,7 @@ type CleanResult struct {
 	FailedFiles   []string          `json:"failed_files"`   // Paths that could not be deleted
 	FailedReasons map[string]string `json:"failed_reasons"` // Failed path → reason mapping
 	Message       string            `json:"message"`        // Human-readable summary
+	Warnings      []string          `json:"warnings,omitempty"`
 }
 
 // OperationLog records a single operation (scan, clean, shred, etc.) for auditing.
