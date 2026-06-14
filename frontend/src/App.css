@@ -533,6 +533,43 @@ button:disabled {
   background: #ffffff;
 }
 
+.scan-table {
+  min-width: 1420px;
+  table-layout: fixed;
+}
+
+.scan-table .scan-col-check {
+  width: 56px;
+}
+
+.scan-table .scan-col-name {
+  width: 360px;
+}
+
+.scan-table .scan-col-category {
+  width: 88px;
+}
+
+.scan-table .scan-col-risk {
+  width: 96px;
+}
+
+.scan-table .scan-col-size {
+  width: 82px;
+}
+
+.scan-table .scan-col-modified {
+  width: 158px;
+}
+
+.scan-table .scan-col-source {
+  width: 190px;
+}
+
+.scan-table .scan-col-path {
+  width: 390px;
+}
+
 .compact-table {
   min-width: 920px;
 }
@@ -599,11 +636,41 @@ button:disabled {
 }
 
 .path-cell {
-  max-width: 420px;
   color: #475467;
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 12px;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-table .name-cell,
+.scan-table .source-cell,
+.scan-table .path-cell {
+  min-width: 0;
+}
+
+.category-cell {
+  white-space: nowrap;
+}
+
+.scan-table .risk-cell,
+.scan-table .size-cell,
+.scan-table .date-cell {
+  white-space: nowrap;
+}
+
+.scan-table .item-name,
+.scan-table .source-cell > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-table .item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .log-failure-cell {

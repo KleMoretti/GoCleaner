@@ -969,7 +969,17 @@ function App() {
                 {scanResult && <span>当前显示 {filteredItems.length} 项 / 共 {scanItems.length} 项，耗时 {scanResult.duration_ms} ms</span>}
               </div>
               <div className="table-wrap">
-                <table className="data-table">
+                <table className="data-table scan-table">
+                  <colgroup>
+                    <col className="scan-col-check" />
+                    <col className="scan-col-name" />
+                    <col className="scan-col-category" />
+                    <col className="scan-col-risk" />
+                    <col className="scan-col-size" />
+                    <col className="scan-col-modified" />
+                    <col className="scan-col-source" />
+                    <col className="scan-col-path" />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th className="checkbox-col">勾选</th>
@@ -992,37 +1002,37 @@ function App() {
                             onChange={(event) => setItemSelected(item.id, event.target.checked)}
                           />
                         </td>
-                        <td>
-                          <div className="item-name">{item.name}</div>
+                        <td className="name-cell">
+                          <div className="item-name" title={item.name}>{item.name}</div>
                           {item.plugin && (
-                            <div className="item-meta">
+                            <div className="item-meta" title={`${item.plugin.browser} / ${item.plugin.profile} / v${item.plugin.version || '-'}`}>
                               {item.plugin.browser} / {item.plugin.profile} / v{item.plugin.version || '-'}
                             </div>
                           )}
                           {item.registry && (
-                            <div className="item-meta">
+                            <div className="item-meta" title={`${item.registry.hive} / ${item.registry.value_type}`}>
                               {item.registry.hive} / {item.registry.value_type}
                             </div>
                           )}
                         </td>
-                        <td>{categoryLabel(item.category)}</td>
-                        <td>
+                        <td className="category-cell">{categoryLabel(item.category)}</td>
+                        <td className="risk-cell">
                           <span className="risk-tag" style={{ backgroundColor: RiskColors[item.risk] }}>
                             {riskLabel(item.risk)}
                           </span>
                         </td>
-                        <td>{formatBytes(item.size)}</td>
-                        <td>{formatDateFromSeconds(item.last_modified)}</td>
-                        <td>
-                          <div>{item.source}</div>
+                        <td className="size-cell">{formatBytes(item.size)}</td>
+                        <td className="date-cell">{formatDateFromSeconds(item.last_modified)}</td>
+                        <td className="source-cell">
+                          <div title={item.source}>{item.source}</div>
                           {item.plugin && (
-                            <div className="item-meta">{item.plugin.extension_id}</div>
+                            <div className="item-meta" title={item.plugin.extension_id}>{item.plugin.extension_id}</div>
                           )}
                           {item.registry && (
-                            <div className="item-meta">{item.registry.target_path}</div>
+                            <div className="item-meta" title={item.registry.target_path}>{item.registry.target_path}</div>
                           )}
                         </td>
-                        <td className="path-cell">{item.path}</td>
+                        <td className="path-cell" title={item.path}>{item.path}</td>
                       </tr>
                     ))}
                     {!scanResult && (
