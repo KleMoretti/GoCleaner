@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v1.0.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark this release as a prerelease"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    name: Build and publish Windows exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Test frontend summary logic
+        working-directory: frontend
+        run: npm run test:summary
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Build Windows package
+        run: wails build -clean -platform windows/amd64
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+          } else {
+            $version = "${{ github.ref_name }}"
+          }
+
+          if (-not $version.StartsWith("v")) {
+            throw "Release version must start with v, for example v1.0.0"
+          }
+
+          $assetName = "GoCleaner-$version-windows-amd64.exe"
+          Copy-Item -LiteralPath "build/bin/GoCleaner.exe" -Destination $assetName
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "asset_name=$assetName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.asset_name }}
+          path: ${{ steps.meta.outputs.asset_name }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          ASSET_NAME: ${{ steps.meta.outputs.asset_name }}
+          PRERELEASE: ${{ inputs.prerelease || false }}
+        run: |
+          gh release view $env:VERSION 2>$null
+
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:VERSION $env:ASSET_NAME --clobber
+            exit $LASTEXITCODE
+          }
+
+          $releaseArgs = @(
+            "release", "create", $env:VERSION,
+            $env:ASSET_NAME,
+            "--title", "GoCleaner $env:VERSION",
+            "--notes", "Windows amd64 executable package for GoCleaner.",
+            "--target", $env:GITHUB_SHA
+          )
+
+          if ($env:PRERELEASE -eq "true") {
+            $releaseArgs += "--prerelease"
+          }
+
+          gh @releaseArgs
