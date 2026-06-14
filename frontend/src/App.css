@@ -534,7 +534,7 @@ button:disabled {
 }
 
 .scan-table {
-  min-width: 1420px;
+  min-width: 1440px;
   table-layout: fixed;
 }
 
@@ -547,7 +547,7 @@ button:disabled {
 }
 
 .scan-table .scan-col-category {
-  width: 88px;
+  width: 108px;
 }
 
 .scan-table .scan-col-risk {
@@ -651,7 +651,11 @@ button:disabled {
 }
 
 .category-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 
 .scan-table .risk-cell,
