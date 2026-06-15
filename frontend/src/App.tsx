@@ -28,6 +28,13 @@ import {
   reconcileItemsAfterClean,
   summarizeSelection,
 } from './summary';
+import {
+  countSelectableRows,
+  filterScanRows,
+  paginateScanRows,
+  updateItemSelectionAtIndex,
+  updateRowsSelection,
+} from './scanTable';
 import type {
   CleanResult,
   CleanRule,
@@ -40,8 +47,8 @@ import type {
   ScanResult,
   ShredResult,
 } from './models';
+import type { RiskFilter } from './scanTable';
 
-type RiskFilter = 'all' | RiskLevel;
 type ConfirmVariant = 'default' | 'warning' | 'danger';
 
 interface ConfirmDialogState {
@@ -54,6 +61,7 @@ interface ConfirmDialogState {
 }
 
 const riskOrder: RiskLevel[] = ['low', 'medium', 'high'];
+const pageSizeOptions = [50, 100, 200];
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -185,6 +193,8 @@ function App() {
   const [shredPasses, setShredPasses] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedRisk, setSelectedRisk] = useState<RiskFilter>('all');
+  const [resultsPage, setResultsPage] = useState(1);
+  const [resultsPageSize, setResultsPageSize] = useState(100);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [cleaning, setCleaning] = useState(false);
@@ -193,6 +203,10 @@ function App() {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  useEffect(() => {
+    setResultsPage(1);
+  }, [selectedCategory, selectedRisk, resultsPageSize, scanResult?.items.length]);
 
   useEffect(() => {
     const runtime = (window as unknown as { runtime?: { EventsOn?: unknown } }).runtime;
@@ -280,16 +294,14 @@ function App() {
     }
   }
 
-  function setItemSelected(id: string, selected: boolean) {
+  function setItemSelected(index: number, selected: boolean) {
     setScanResult((current) => {
       if (!current) {
         return current;
       }
       return {
         ...current,
-        items: current.items.map((item) => (
-          item.id === id ? { ...item, selected } : item
-        )),
+        items: updateItemSelectionAtIndex(current.items, index, selected),
       };
     });
   }
@@ -301,13 +313,26 @@ function App() {
     return ['all', ...Array.from(new Set(source))];
   }, [rules, scanItems]);
 
-  const filteredItems = useMemo(() => {
-    return scanItems.filter((item) => {
-      const categoryMatch = selectedCategory === 'all' || item.category === selectedCategory;
-      const riskMatch = selectedRisk === 'all' || item.risk === selectedRisk;
-      return categoryMatch && riskMatch;
-    });
-  }, [scanItems, selectedCategory, selectedRisk]);
+  const filteredRows = useMemo(
+    () => filterScanRows(scanItems, selectedCategory, selectedRisk),
+    [scanItems, selectedCategory, selectedRisk],
+  );
+  const pagedRows = useMemo(
+    () => paginateScanRows(filteredRows, resultsPage, resultsPageSize),
+    [filteredRows, resultsPage, resultsPageSize],
+  );
+  const selectableFilteredCount = useMemo(
+    () => countSelectableRows(filteredRows),
+    [filteredRows],
+  );
+  const selectedFilteredCount = useMemo(
+    () => filteredRows.filter((row) => row.item.risk !== 'high' && row.item.selected).length,
+    [filteredRows],
+  );
+  const selectedFilteredAnyCount = useMemo(
+    () => filteredRows.filter((row) => row.item.selected).length,
+    [filteredRows],
+  );
 
   const selectionSummary = useMemo(() => summarizeSelection(scanItems), [scanItems]);
   const selectedItems = selectionSummary.items;
@@ -348,23 +373,25 @@ function App() {
   const shredHasPermissionFailure = hasPermissionFailure(Object.values(shredResult?.failed_reasons || {}));
   const progressPercent = clampPercent(scanProgress?.percent || 0);
 
-  function selectVisibleSafeItems() {
-    const visibleSafeIds = new Set(
-      filteredItems
-        .filter((item) => item.risk !== 'high' && item.type === 'file')
-        .map((item) => item.id),
-    );
+  function setFilteredSelection(selected: boolean) {
     setScanResult((current) => {
       if (!current) {
         return current;
       }
+      const currentRows = filterScanRows(current.items, selectedCategory, selectedRisk);
       return {
         ...current,
-        items: current.items.map((item) => (
-          visibleSafeIds.has(item.id) ? { ...item, selected: true } : item
-        )),
+        items: updateRowsSelection(current.items, currentRows, selected),
       };
     });
+  }
+
+  function selectVisibleSafeItems() {
+    setFilteredSelection(true);
+  }
+
+  function clearFilteredSelection() {
+    setFilteredSelection(false);
   }
 
   function clearSelection() {
@@ -846,8 +873,15 @@ function App() {
                 <button onClick={runRegistryScan} disabled={loading || scanning || cleaning}>
                   {scanning ? '扫描中...' : '扫描注册表'}
                 </button>
-                <button onClick={selectVisibleSafeItems} disabled={!scanResult || filteredItems.length === 0}>
-                  选择安全项
+                <button
+                  onClick={selectVisibleSafeItems}
+                  disabled={!scanResult || selectableFilteredCount === 0 || selectableFilteredCount === selectedFilteredCount}
+                  title="批量选择会跳过高风险项目"
+                >
+                  全选当前筛选
+                </button>
+                <button onClick={clearFilteredSelection} disabled={!scanResult || selectedFilteredAnyCount === 0}>
+                  取消当前筛选
                 </button>
                 <button onClick={clearSelection} disabled={selectedItems.length === 0}>
                   清空选择
@@ -984,7 +1018,28 @@ function App() {
             <section className="table-section">
               <div className="section-heading">
                 <h2>扫描结果</h2>
-                {scanResult && <span>当前显示 {filteredItems.length} 项 / 共 {scanItems.length} 项，耗时 {scanResult.duration_ms} ms</span>}
+                {scanResult && (
+                  <div className="table-pagination" aria-label="扫描结果分页">
+                    <span>
+                      显示 {pagedRows.from}-{pagedRows.to} / 筛选 {filteredRows.length} / 总 {scanItems.length} 项，耗时 {scanResult.duration_ms} ms
+                    </span>
+                    <label>
+                      每页
+                      <select value={resultsPageSize} onChange={(event) => setResultsPageSize(Number(event.target.value))}>
+                        {pageSizeOptions.map((size) => (
+                          <option key={size} value={size}>{size}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button onClick={() => setResultsPage((page) => Math.max(1, page - 1))} disabled={pagedRows.page <= 1}>
+                      上一页
+                    </button>
+                    <span>{pagedRows.page} / {pagedRows.totalPages}</span>
+                    <button onClick={() => setResultsPage((page) => Math.min(pagedRows.totalPages, page + 1))} disabled={pagedRows.page >= pagedRows.totalPages}>
+                      下一页
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="table-wrap">
                 <table className="data-table scan-table">
@@ -1011,13 +1066,13 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredItems.map((item) => (
-                      <tr key={item.id} className={item.risk === 'high' ? 'high-risk-row' : ''}>
+                    {pagedRows.rows.map(({ item, index, key }) => (
+                      <tr key={key} className={item.risk === 'high' ? 'high-risk-row' : ''}>
                         <td className="checkbox-col">
                           <input
                             type="checkbox"
                             checked={item.selected}
-                            onChange={(event) => setItemSelected(item.id, event.target.checked)}
+                            onChange={(event) => setItemSelected(index, event.target.checked)}
                           />
                         </td>
                         <td className="name-cell">
@@ -1058,7 +1113,7 @@ function App() {
                         <td colSpan={8} className="empty-row">尚未扫描</td>
                       </tr>
                     )}
-                    {scanResult && filteredItems.length === 0 && (
+                    {scanResult && filteredRows.length === 0 && (
                       <tr>
                         <td colSpan={8} className="empty-row">
                           {scanItems.length === 0 ? '扫描完成，未发现可清理项目' : '当前筛选条件下没有匹配项'}

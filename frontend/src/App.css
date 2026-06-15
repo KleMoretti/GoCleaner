@@ -524,6 +524,41 @@ button:disabled {
   white-space: nowrap;
 }
 
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.table-pagination label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #475467;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.table-pagination select {
+  min-height: 28px;
+  border: 1px solid #c8d0dc;
+  border-radius: 4px;
+  padding: 4px 24px 4px 8px;
+  color: #1f2933;
+  background: #ffffff;
+  font: inherit;
+  font-size: 12px;
+}
+
+.table-pagination button {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -876,6 +911,10 @@ button:disabled {
   .section-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .table-pagination {
+    justify-content: flex-start;
   }
 
   .modal-backdrop {
