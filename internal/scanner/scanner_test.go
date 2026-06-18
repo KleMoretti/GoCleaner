@@ -617,6 +617,47 @@ func TestScan_ItemsSortedByRuleOrder(t *testing.T) {
 	}
 }
 
+func TestScanDeduplicatesSameFileAcrossRules(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "same.tmp")
+	if err := os.WriteFile(filePath, []byte("duplicate"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rules := []model.CleanRule{
+		{
+			Name:      "Temp rule one",
+			Category:  model.CategorySystem,
+			Paths:     []string{dir},
+			Patterns:  []string{"*.tmp"},
+			Risk:      model.RiskLow,
+			DefaultOn: true,
+		},
+		{
+			Name:      "Temp rule two",
+			Category:  model.CategorySystem,
+			Paths:     []string{dir},
+			Patterns:  []string{"same.*"},
+			Risk:      model.RiskMedium,
+			DefaultOn: true,
+		},
+	}
+
+	result := Scan(rules)
+	if result.TotalFiles != 1 {
+		t.Fatalf("TotalFiles = %d, want 1 for duplicate path", result.TotalFiles)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items = %d, want 1 duplicate path collapsed: %+v", len(result.Items), result.Items)
+	}
+	if result.TotalSize != int64(len("duplicate")) {
+		t.Fatalf("TotalSize = %d, want one file size", result.TotalSize)
+	}
+	if result.Items[0].Path != filePath {
+		t.Fatalf("deduped path = %q, want %q", result.Items[0].Path, filePath)
+	}
+}
+
 func TestScanWithOptionsReportsProgressByRule(t *testing.T) {
 	dir1 := makeTempDir(t, map[string]string{"a.tmp": "a"})
 	dir2 := makeTempDir(t, map[string]string{"b.log": "b"})

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gocleaner/internal/model"
@@ -42,12 +43,28 @@ func Clean(items []model.ScanItem, options Options) (*model.CleanResult, error) 
 
 func selectedItems(items []model.ScanItem) []model.ScanItem {
 	selected := make([]model.ScanItem, 0, len(items))
+	seen := make(map[string]bool, len(items))
 	for _, item := range items {
-		if item.Selected {
-			selected = append(selected, item)
+		if !item.Selected {
+			continue
 		}
+		key := cleanItemDedupKey(item)
+		if key != "" && seen[key] {
+			continue
+		}
+		if key != "" {
+			seen[key] = true
+		}
+		selected = append(selected, item)
 	}
 	return selected
+}
+
+func cleanItemDedupKey(item model.ScanItem) string {
+	if strings.TrimSpace(item.Path) == "" {
+		return ""
+	}
+	return item.Type + "\x00" + strings.ToLower(filepath.Clean(item.Path))
 }
 
 func containsHighRisk(items []model.ScanItem) bool {

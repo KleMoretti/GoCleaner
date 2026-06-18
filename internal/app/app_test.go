@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ func withTempWorkingDir(t *testing.T) string {
 	}
 
 	dir := t.TempDir()
+	t.Setenv("GOCLEANER_DATA_DIR", filepath.Join(dir, "data"))
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("Chdir temp: %v", err)
 	}
@@ -132,6 +134,28 @@ func TestAppCleanUsesAuthorizedScanItemInsteadOfFrontendPath(t *testing.T) {
 	}
 }
 
+func TestAppCleanDeduplicatesRepeatedAuthorizedIDs(t *testing.T) {
+	dir := withTempWorkingDir(t)
+	path := filepath.Join(dir, "duplicate-request.tmp")
+	if err := os.WriteFile(path, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	a := New(nil)
+	item := appTestItem(path, true, model.RiskLow)
+	rememberAppTestItem(a, item)
+	result, err := a.Clean([]model.ScanItem{item, item}, false)
+	if err != nil {
+		t.Fatalf("Clean returned error: %v", err)
+	}
+	if result.DeletedFiles != 1 {
+		t.Fatalf("DeletedFiles = %d, want one deletion", result.DeletedFiles)
+	}
+	if len(result.FailedFiles) != 0 {
+		t.Fatalf("duplicate authorized ID should not cause a second delete failure: %+v", result)
+	}
+}
+
 func TestAppCleanReturnsResultWhenOperationLogFailsAfterDeletion(t *testing.T) {
 	dir := withTempWorkingDir(t)
 	path := filepath.Join(dir, "delete-with-log-failure.tmp")
@@ -155,6 +179,67 @@ func TestAppCleanReturnsResultWhenOperationLogFailsAfterDeletion(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 		t.Fatalf("file should be deleted despite log failure, stat err = %v", statErr)
+	}
+}
+
+func TestAppScanReturnsResultWhenOperationLogFails(t *testing.T) {
+	dir := withTempWorkingDir(t)
+	scanDir := filepath.Join(dir, "scan")
+	if err := os.MkdirAll(scanDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll scan dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scanDir, "found.tmp"), []byte("hello"), 0o600); err != nil {
+		t.Fatalf("WriteFile scan fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile data sentinel: %v", err)
+	}
+
+	embeddedRules := []byte(`[
+		{
+			"name": "Temp fixture",
+			"category": "system",
+			"paths": [` + fmt.Sprintf("%q", scanDir) + `],
+			"patterns": ["*.tmp"],
+			"risk": "low",
+			"default_on": true
+		}
+	]`)
+	a := New(embeddedRules)
+	result, err := a.Scan()
+	if err != nil {
+		t.Fatalf("Scan should return scan result without rejecting on log failure; error = %v", err)
+	}
+	if result.TotalFiles != 1 {
+		t.Fatalf("TotalFiles = %d, want 1", result.TotalFiles)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Scan warnings = %+v, want one operation-log warning", result.Warnings)
+	}
+}
+
+func TestGetRulesWarningsIncludesValidationErrors(t *testing.T) {
+	withTempWorkingDir(t)
+	a := New([]byte(`[
+		{
+			"name": "Bad relative",
+			"category": "system",
+			"paths": ["tmp"],
+			"patterns": ["*.tmp"],
+			"risk": "low",
+			"default_on": true
+		}
+	]`))
+
+	warnings, err := a.GetRulesWarnings()
+	if err != nil {
+		t.Fatalf("GetRulesWarnings returned error: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("validation errors should be returned for UI visibility")
+	}
+	if !strings.Contains(warnings[0], "规则错误") {
+		t.Fatalf("warning should identify fatal rule errors, got %+v", warnings)
 	}
 }
 

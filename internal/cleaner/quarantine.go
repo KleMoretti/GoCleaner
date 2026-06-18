@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gocleaner/internal/model"
+	"gocleaner/internal/paths"
 )
 
 // QuarantineStore manages plugin directories moved out of browser extension roots.
@@ -19,14 +21,18 @@ type QuarantineStore struct {
 	root string
 }
 
+var renamePath = os.Rename
+
+const maxQuarantineRecordLineBytes = 16 * 1024 * 1024
+
 // NewQuarantineStore creates a quarantine store rooted at the given directory.
 func NewQuarantineStore(root string) *QuarantineStore {
 	return &QuarantineStore{root: root}
 }
 
-// DefaultQuarantineRoot is the default project-local plugin quarantine path.
+// DefaultQuarantineRoot is the default app-data plugin quarantine path.
 func DefaultQuarantineRoot() string {
-	return filepath.Join("data", "quarantine", "plugins")
+	return paths.PluginQuarantineDir()
 }
 
 // QuarantinePlugins moves selected plugin directories into the quarantine store.
@@ -108,7 +114,7 @@ func (s *QuarantineStore) RestorePlugin(recordID string) (*model.QuarantineResul
 		result.Message = "Restore failed: cannot create original parent."
 		return result, nil
 	}
-	if err := os.Rename(record.QuarantinePath, record.OriginalPath); err != nil {
+	if err := movePath(record.QuarantinePath, record.OriginalPath); err != nil {
 		recordQuarantineFailure(result, record.OriginalPath, "restore move failed: "+err.Error())
 		result.Message = "Restore failed: move failed."
 		return result, nil
@@ -116,7 +122,7 @@ func (s *QuarantineStore) RestorePlugin(recordID string) (*model.QuarantineResul
 
 	records[index].RestoredAt = time.Now().Format(time.RFC3339)
 	if err := s.writeRecords(records); err != nil {
-		if rollbackErr := os.Rename(record.OriginalPath, record.QuarantinePath); rollbackErr != nil {
+		if rollbackErr := movePath(record.OriginalPath, record.QuarantinePath); rollbackErr != nil {
 			return result, fmt.Errorf("write restore record failed: %w; rollback failed: %v", err, rollbackErr)
 		}
 		return result, err
@@ -177,7 +183,7 @@ func (s *QuarantineStore) quarantinePlugin(item model.ScanItem) error {
 	if err := s.appendRecord(record); err != nil {
 		return fmt.Errorf("write quarantine record failed: %w", err)
 	}
-	if err := os.Rename(item.Path, contentPath); err != nil {
+	if err := movePath(item.Path, contentPath); err != nil {
 		if cleanupErr := s.removeRecord(recordID); cleanupErr != nil {
 			return fmt.Errorf("move to quarantine failed: %w; cleanup record failed: %v", err, cleanupErr)
 		}
@@ -275,6 +281,7 @@ func (s *QuarantineStore) readRecords() ([]model.QuarantineRecord, error) {
 
 	var records []model.QuarantineRecord
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), maxQuarantineRecordLineBytes)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -324,6 +331,79 @@ func (s *QuarantineStore) writeRecords(records []model.QuarantineRecord) error {
 		return err
 	}
 	return nil
+}
+
+func movePath(src, dst string) error {
+	if err := renamePath(src, dst); err == nil {
+		return nil
+	}
+	if err := copyDir(src, dst); err != nil {
+		_ = os.RemoveAll(dst)
+		return err
+	}
+	if err := os.RemoveAll(src); err != nil {
+		_ = os.RemoveAll(dst)
+		return err
+	}
+	return nil
+}
+
+func copyDir(src, dst string) error {
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if srcInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("symbolic link skipped")
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source is not a directory")
+	}
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symbolic link skipped: %s", path)
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		return copyFile(path, target, info.Mode().Perm())
+	})
+}
+
+func copyFile(src, dst string, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 func sortRecordsNewestFirst(records []model.QuarantineRecord) {

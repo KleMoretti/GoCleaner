@@ -55,6 +55,26 @@ func TestCleanDeletesSelectedFileAndReportsFreedSize(t *testing.T) {
 	}
 }
 
+func TestCleanDeduplicatesSelectedFilePaths(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestFile(t, dir, "delete-once.tmp", "hello")
+	first := testItem(path, true, model.RiskLow)
+	second := first
+	second.ID = "duplicate-id"
+	second.Source = "duplicate rule"
+
+	result, err := Clean([]model.ScanItem{first, second}, Options{})
+	if err != nil {
+		t.Fatalf("Clean returned error: %v", err)
+	}
+	if result.DeletedFiles != 1 {
+		t.Fatalf("DeletedFiles = %d, want 1", result.DeletedFiles)
+	}
+	if len(result.FailedFiles) != 0 {
+		t.Fatalf("duplicate path should not be cleaned twice, failures = %+v", result.FailedFiles)
+	}
+}
+
 func TestCleanSkipsUnselectedItems(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestFile(t, dir, "keep.tmp", "hello")

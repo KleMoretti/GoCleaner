@@ -13,6 +13,7 @@ import (
 	"gocleaner/internal/cleaner"
 	"gocleaner/internal/logger"
 	"gocleaner/internal/model"
+	"gocleaner/internal/paths"
 	registryops "gocleaner/internal/registry"
 	"gocleaner/internal/rules"
 	"gocleaner/internal/scanner"
@@ -116,9 +117,8 @@ func (a *App) Scan() (*model.ScanResult, error) {
 	pluginItems, pluginErrors := scanner.ScanBrowserPlugins(scanner.DefaultPluginTargets())
 	result.Items = append(result.Items, pluginItems...)
 	result.Errors = append(result.Errors, pluginErrors...)
-	for _, item := range pluginItems {
-		result.TotalSize += item.Size
-	}
+	result.Items = scanner.DeduplicateItems(result.Items)
+	recalculateScanSummary(result)
 	result.Duration = time.Since(start).Milliseconds()
 	a.replaceAuthorizedItems(result.Items)
 	a.emitScanProgress(model.ScanProgress{
@@ -131,7 +131,7 @@ func (a *App) Scan() (*model.ScanResult, error) {
 		Percent:        100,
 	})
 	if err := appendScanLog(result); err != nil {
-		return result, fmt.Errorf("record scan operation log: %w", err)
+		addScanWarning(result, err)
 	}
 	return result, nil
 }
@@ -225,7 +225,7 @@ func (a *App) ScanInvalidStartupRegistry() (*model.ScanResult, error) {
 		Percent:        100,
 	})
 	if err := appendScanLog(result); err != nil {
-		return result, fmt.Errorf("record registry scan operation log: %w", err)
+		addScanWarning(result, err)
 	}
 	a.replaceAuthorizedItemsOfType(model.TypeRegistry, result.Items)
 	return result, nil
@@ -293,10 +293,14 @@ func (a *App) Ping() string {
 // path expansion is working correctly.
 func (a *App) GetEnvInfo() map[string]string {
 	vars := []string{"TEMP", "LOCALAPPDATA", "APPDATA", "USERPROFILE"}
-	result := make(map[string]string, len(vars))
+	result := make(map[string]string, len(vars)+4)
 	for _, v := range vars {
 		result[v] = windows.ExpandPath("%" + v + "%")
 	}
+	result["DATA_DIR"] = paths.DataDir()
+	result["LOG_PATH"] = paths.OperationLogPath()
+	result["QUARANTINE_DIR"] = paths.PluginQuarantineDir()
+	result["REGISTRY_BACKUP_DIR"] = paths.RegistryBackupDir()
 	return result
 }
 
@@ -333,9 +337,12 @@ func (a *App) GetRulesWarnings() ([]string, error) {
 		return nil, fmt.Errorf("加载规则文件失败: %w", err)
 	}
 
-	warnings := make([]string, 0, len(result.Warnings))
+	warnings := make([]string, 0, len(result.Errors)+len(result.Warnings))
+	for _, e := range result.Errors {
+		warnings = append(warnings, "规则错误: "+e.Error())
+	}
 	for _, w := range result.Warnings {
-		warnings = append(warnings, w.Error())
+		warnings = append(warnings, "规则警告: "+w.Error())
 	}
 	return warnings, nil
 }
@@ -417,9 +424,16 @@ func (a *App) authorizeSelectedItems(items []model.ScanItem, requiredType string
 
 	authorized := make([]model.ScanItem, 0, len(items))
 	rejected := make([]authorizationFailure, 0)
+	seenRequests := make(map[string]bool, len(items))
 	for _, request := range items {
 		if !request.Selected {
 			continue
+		}
+		if request.ID != "" {
+			if seenRequests[request.ID] {
+				continue
+			}
+			seenRequests[request.ID] = true
 		}
 		stored, ok := a.authorizedItems[request.ID]
 		if !ok {
@@ -509,12 +523,29 @@ func addRegistryWarning(result *model.RegistryActionResult, err error) {
 	result.Warnings = append(result.Warnings, logWarning(err))
 }
 
+func addScanWarning(result *model.ScanResult, err error) {
+	result.Warnings = append(result.Warnings, logWarning(err))
+}
+
 func addShredWarning(result *model.ShredResult, err error) {
 	result.Warnings = append(result.Warnings, logWarning(err))
 }
 
 func logWarning(err error) string {
 	return "operation completed but operation log was not recorded: " + err.Error()
+}
+
+func recalculateScanSummary(result *model.ScanResult) {
+	result.TotalFiles = 0
+	result.TotalSize = 0
+	for _, item := range result.Items {
+		if item.Type == model.TypeFile {
+			result.TotalFiles++
+		}
+		if item.Type != model.TypeRegistry {
+			result.TotalSize += item.Size
+		}
+	}
 }
 
 func appendScanLog(result *model.ScanResult) error {

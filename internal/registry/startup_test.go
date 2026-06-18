@@ -102,3 +102,19 @@ func TestBuildInvalidStartupItemsOnlyReportsMissingAbsoluteTargets(t *testing.T)
 		t.Fatalf("item path = %q, should contain Run key", item.Path)
 	}
 }
+
+func TestInvalidStartupScanResultDoesNotCountRegistryItemsAsFiles(t *testing.T) {
+	values := []windows.RegistryValue{
+		{Name: "Missing", Type: windows.RegistryString, Data: "\"C:\\Missing\\app.exe\""},
+	}
+	result := newInvalidStartupScanResult(values, func(string) bool { return false }, 12)
+	if len(result.Items) != 1 {
+		t.Fatalf("registry items = %d, want 1", len(result.Items))
+	}
+	if result.TotalFiles != 0 {
+		t.Fatalf("TotalFiles = %d, want 0 because registry items are not files", result.TotalFiles)
+	}
+	if result.Duration != 12 {
+		t.Fatalf("Duration = %d, want 12", result.Duration)
+	}
+}

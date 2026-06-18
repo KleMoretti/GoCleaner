@@ -104,3 +104,25 @@ func TestReadRecentSkipsMalformedJSONLines(t *testing.T) {
 		t.Fatalf("operations = %q, %q; want clean, scan", got[0].Operation, got[1].Operation)
 	}
 }
+
+func TestReadRecentHandlesLargeJSONLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.jsonl")
+	store := New(path)
+	entry := model.NewOperationLog(model.OpClean)
+	entry.FailedPaths = []string{strings.Repeat("C", 70*1024)}
+	entry.FailedReasons = []string{"permission denied"}
+	if err := store.Append(*entry); err != nil {
+		t.Fatalf("Append returned error: %v", err)
+	}
+
+	got, err := store.ReadRecent(1)
+	if err != nil {
+		t.Fatalf("ReadRecent returned error for large JSONL row: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ReadRecent len = %d, want 1", len(got))
+	}
+	if len(got[0].FailedPaths) != 1 || len(got[0].FailedPaths[0]) != 70*1024 {
+		t.Fatalf("large failed path was not preserved")
+	}
+}

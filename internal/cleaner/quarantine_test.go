@@ -1,6 +1,7 @@
 package cleaner
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +87,67 @@ func TestQuarantinePluginsMovesSelectedPluginAndRestoreReturnsIt(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(pluginPath, "1.0.0", "manifest.json")); statErr != nil {
 		t.Fatalf("restored manifest missing: %v", statErr)
+	}
+}
+
+func TestQuarantinePluginsFallsBackWhenRenameFails(t *testing.T) {
+	workDir := t.TempDir()
+	pluginPath := makePluginDir(t, workDir)
+	store := NewQuarantineStore(filepath.Join(workDir, "data", "quarantine", "plugins"))
+
+	originalRename := renamePath
+	renamePath = func(oldPath, newPath string) error {
+		return errors.New("simulated cross-volume rename failure")
+	}
+	t.Cleanup(func() {
+		renamePath = originalRename
+	})
+
+	result, err := store.QuarantinePlugins([]model.ScanItem{pluginItem(pluginPath)})
+	if err != nil {
+		t.Fatalf("QuarantinePlugins returned error: %v", err)
+	}
+	if result.MovedItems != 1 {
+		t.Fatalf("MovedItems = %d, want 1 with copy/remove fallback", result.MovedItems)
+	}
+	if _, statErr := os.Stat(pluginPath); !os.IsNotExist(statErr) {
+		t.Fatalf("original plugin path should be removed after fallback move, stat err = %v", statErr)
+	}
+	records, err := store.ListRecords()
+	if err != nil {
+		t.Fatalf("ListRecords returned error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+	if _, statErr := os.Stat(filepath.Join(records[0].QuarantinePath, "1.0.0", "manifest.json")); statErr != nil {
+		t.Fatalf("quarantined manifest missing after fallback move: %v", statErr)
+	}
+}
+
+func TestListRecordsHandlesLargeJSONLine(t *testing.T) {
+	store := NewQuarantineStore(filepath.Join(t.TempDir(), "quarantine"))
+	record := model.QuarantineRecord{
+		RecordID:       "large-record",
+		OriginalPath:   strings.Repeat("C", 70*1024),
+		QuarantinePath: filepath.Join(t.TempDir(), "content"),
+		Name:           "Large",
+		ItemType:       model.TypePlugin,
+		CreatedAt:      "2026-06-18T10:00:00+08:00",
+	}
+	if err := store.appendRecord(record); err != nil {
+		t.Fatalf("appendRecord returned error: %v", err)
+	}
+
+	records, err := store.ListRecords()
+	if err != nil {
+		t.Fatalf("ListRecords returned error for large JSONL row: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records len = %d, want 1", len(records))
+	}
+	if len(records[0].OriginalPath) != 70*1024 {
+		t.Fatalf("large original path was not preserved")
 	}
 }
 

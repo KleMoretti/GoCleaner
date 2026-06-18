@@ -10,14 +10,17 @@ import (
 	"strings"
 
 	"gocleaner/internal/model"
+	"gocleaner/internal/paths"
 )
 
 type Store struct {
 	path string
 }
 
+const maxJSONLLineBytes = 16 * 1024 * 1024
+
 func DefaultPath() string {
-	return filepath.Join("data", "operation.jsonl")
+	return paths.OperationLogPath()
 }
 
 func New(path string) *Store {
@@ -70,6 +73,7 @@ func (s *Store) ReadRecent(limit int) ([]model.OperationLog, error) {
 
 	var entries []model.OperationLog
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), maxJSONLLineBytes)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

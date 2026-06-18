@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"gocleaner/internal/model"
+	"gocleaner/internal/windows"
 )
 
 // ── Allowed values ─────────────────────────────────────────────────────
@@ -216,10 +217,6 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 		errs = append(errs, &LoadError{RuleIndex: index, RuleName: rule.Name, Message: msg})
 	}
 
-	addWarn := func(msg string) {
-		warns = append(warns, &LoadError{RuleIndex: index, RuleName: rule.Name, Message: msg})
-	}
-
 	// ── Required fields ────────────────────────────────────────────
 
 	if rule.Name == "" {
@@ -255,15 +252,23 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 			addErr(fmt.Sprintf("paths[%d] = %q，不允许使用相对路径引用当前或上级目录", pi, trimmed))
 			continue
 		}
+		expanded := windows.ExpandGlobWildcards(trimmed)
+		if strings.Contains(expanded, "%") {
+			addErr(fmt.Sprintf("paths[%d] = %q 包含未解析的环境变量，拒绝加载", pi, trimmed))
+			continue
+		}
+		if !isAbsoluteWindowsPath(expanded) {
+			addErr(fmt.Sprintf("paths[%d] = %q 不是绝对路径，拒绝加载", pi, trimmed))
+			continue
+		}
 	}
 
 	// ── Forbidden system path prefix ───────────────────────────────
 
 	for _, p := range rule.Paths {
-		cleaned := filepath.Clean(p)
-		upper := strings.ToUpper(cleaned)
+		upper := normalizeWindowsPathForCompare(windows.ExpandGlobWildcards(p))
 		for _, forbidden := range forbiddenPathPrefixes {
-			if strings.HasPrefix(upper, strings.ToUpper(forbidden)) {
+			if hasWindowsPathPrefix(upper, normalizeWindowsPathForCompare(forbidden)) {
 				addErr(fmt.Sprintf("paths 中包含受保护的系统路径 %q，拒绝加载", p))
 				break
 			}
@@ -279,8 +284,9 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 	// the patterns list.
 
 	for _, p := range rule.Paths {
+		expanded := windows.ExpandGlobWildcards(p)
 		// Replace glob tokens with placeholders so we can split on \
-		segments := splitPathSegments(p)
+		segments := splitPathSegments(expanded)
 		for _, seg := range segments {
 			if isForbiddenFileName(seg) {
 				addErr(fmt.Sprintf(
@@ -300,11 +306,12 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 	// by targeting the profile root.
 
 	for _, p := range rule.Paths {
-		if !isBrowserProfilePath(p) {
+		expanded := windows.ExpandGlobWildcards(p)
+		if !isBrowserProfilePath(expanded) {
 			continue
 		}
 		// Strip wildcards and get the last real segment
-		leaf := lastRealSegment(p)
+		leaf := lastRealSegment(expanded)
 		if leaf == "" {
 			continue
 		}
@@ -324,7 +331,8 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 	// always fatal.
 
 	for _, p := range rule.Paths {
-		upper := strings.ToUpper(p)
+		expanded := windows.ExpandGlobWildcards(p)
+		upper := strings.ToUpper(expanded)
 
 		// Check whether this path touches IM account data at all
 		insideIM := false
@@ -341,7 +349,7 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 		// Check for structurally-protected subdirectories (Audio,
 		// Image, File, Video, Msg, FileRecv, Pic).  These are always
 		// fatal — they contain user content, not temporary/cache data.
-		segments := splitPathSegments(p)
+		segments := splitPathSegments(expanded)
 		for _, seg := range segments {
 			if protectedIMDirs[normalizeName(seg)] {
 				addErr(fmt.Sprintf(
@@ -361,24 +369,12 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 			}
 		}
 
-		// If the rule uses patterns:[] (match everything), verify the
-		// leaf is an allowed safe directory.  If patterns are specified,
-		// the user has narrowed the scope — still warn.
-		leaf := lastRealSegment(p)
-		if leaf != "" && !imSafeLeaves[normalizeName(leaf)] {
-			// Patterns exist → warning (user may have narrowed scope)
-			// No patterns → fatal (would match everything)
-			if len(rule.Patterns) == 0 {
-				addErr(fmt.Sprintf(
-					"路径 %q 进入 IM 数据目录且 patterns 为空（将匹配所有文件）。仅允许扫描 log/cache/temp 子目录",
-					p,
-				))
-			} else {
-				addWarn(fmt.Sprintf(
-					"路径 %q 进入 IM 数据目录。请确认 patterns 和 exclude 已排除 Audio/Image/File/Video 目录及 Msg*.db 数据库",
-					p,
-				))
-			}
+		leaf := lastRealSegment(expanded)
+		if leaf == "" || !imSafeLeaves[normalizeName(leaf)] {
+			addErr(fmt.Sprintf(
+				"路径 %q 进入 IM 数据目录但目标目录 %q 不在安全白名单内。仅允许扫描 log/cache/temp 子目录",
+				p, leaf,
+			))
 		}
 	}
 
@@ -405,6 +401,33 @@ func validateRule(index int, rule *model.CleanRule) (errors []*LoadError, warnin
 }
 
 // ── Path helpers ───────────────────────────────────────────────────────
+
+func isAbsoluteWindowsPath(path string) bool {
+	normalized := strings.ReplaceAll(strings.TrimSpace(path), "/", "\\")
+	if strings.HasPrefix(normalized, "\\\\") {
+		return true
+	}
+	if len(normalized) < 3 {
+		return false
+	}
+	first := normalized[0]
+	return ((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')) &&
+		normalized[1] == ':' &&
+		(normalized[2] == '\\' || normalized[2] == '/')
+}
+
+func normalizeWindowsPathForCompare(path string) string {
+	normalized := strings.ReplaceAll(strings.TrimSpace(path), "/", "\\")
+	normalized = filepath.Clean(normalized)
+	normalized = strings.TrimRight(normalized, "\\")
+	return strings.ToUpper(normalized)
+}
+
+func hasWindowsPathPrefix(path, prefix string) bool {
+	path = strings.TrimRight(path, "\\")
+	prefix = strings.TrimRight(prefix, "\\")
+	return path == prefix || strings.HasPrefix(path, prefix+"\\")
+}
 
 // splitPathSegments splits a path on \ and / delimiters, strips wildcard
 // tokens (*, ?), and returns the remaining concrete path segments.

@@ -13,6 +13,7 @@ import (
 	"unicode/utf16"
 
 	"gocleaner/internal/model"
+	"gocleaner/internal/paths"
 	"gocleaner/internal/windows"
 )
 
@@ -28,13 +29,15 @@ func ScanInvalidStartup() (*model.ScanResult, error) {
 		return nil, fmt.Errorf("read HKCU startup values: %w", err)
 	}
 
-	result := &model.ScanResult{
-		Items:  BuildInvalidStartupItems(values, fileExists),
-		Errors: make([]model.ScanError, 0),
+	return newInvalidStartupScanResult(values, fileExists, time.Since(start).Milliseconds()), nil
+}
+
+func newInvalidStartupScanResult(values []windows.RegistryValue, exists func(string) bool, duration int64) *model.ScanResult {
+	return &model.ScanResult{
+		Items:    BuildInvalidStartupItems(values, exists),
+		Errors:   make([]model.ScanError, 0),
+		Duration: duration,
 	}
-	result.TotalFiles = len(result.Items)
-	result.Duration = time.Since(start).Milliseconds()
-	return result, nil
 }
 
 // BuildInvalidStartupItems converts registry startup values into high-risk scan items.
@@ -222,9 +225,9 @@ func recordRegistryFailure(result *model.RegistryActionResult, path, reason stri
 	result.FailedReasons[path] = reason
 }
 
-// DefaultBackupDir returns the project-local registry backup directory.
+// DefaultBackupDir returns the app-data registry backup directory.
 func DefaultBackupDir() string {
-	return filepath.Join("data", "registry_backup")
+	return paths.RegistryBackupDir()
 }
 
 // WriteRegistryBackup writes a .reg backup for selected registry values.

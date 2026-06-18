@@ -7,8 +7,10 @@ import {
   GetOperationLogs,
   GetRulesPreview,
   GetRulesWarnings,
+  ListQuarantineRecords,
   Ping,
   QuarantinePlugins,
+  RestoreQuarantinedPlugin,
   Scan,
   ScanInvalidStartupRegistry,
   SelectShredFile,
@@ -39,6 +41,7 @@ import type {
   CleanResult,
   CleanRule,
   OperationLog,
+  QuarantineRecord,
   QuarantineResult,
   RegistryActionResult,
   RiskLevel,
@@ -189,6 +192,8 @@ function App() {
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [operationLogs, setOperationLogs] = useState<OperationLog[]>([]);
+  const [operationLogError, setOperationLogError] = useState<string | null>(null);
+  const [quarantineRecords, setQuarantineRecords] = useState<QuarantineRecord[]>([]);
   const [shredPath, setShredPath] = useState('');
   const [shredPasses, setShredPasses] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -237,8 +242,24 @@ function App() {
   }, [confirmDialog]);
 
   async function loadOperationLogs() {
-    const logs = await GetOperationLogs(30);
-    setOperationLogs((logs || []) as unknown as OperationLog[]);
+    try {
+      const logs = await GetOperationLogs(30);
+      setOperationLogs((logs || []) as unknown as OperationLog[]);
+      setOperationLogError(null);
+    } catch (e: any) {
+      setOperationLogError(errorMessage(e));
+      setOperationLogs([]);
+    }
+  }
+
+  async function loadQuarantineRecords() {
+    try {
+      const records = await ListQuarantineRecords();
+      setQuarantineRecords((records || []) as unknown as QuarantineRecord[]);
+    } catch (e: any) {
+      setError(errorMessage(e));
+      setQuarantineRecords([]);
+    }
   }
 
   async function loadInitialData() {
@@ -257,6 +278,7 @@ function App() {
       setRuleWarnings(warnings || []);
       setEnvInfo(env || {});
       await loadOperationLogs();
+      await loadQuarantineRecords();
       setError(null);
     } catch (e: any) {
       setError(errorMessage(e));
@@ -269,6 +291,7 @@ function App() {
   async function runScan() {
     try {
       setScanning(true);
+      setScanResult(null);
       setScanProgress({
         phase: 'loading_rules',
         current_label: '准备扫描',
@@ -372,6 +395,7 @@ function App() {
   const registryHasPermissionFailure = hasPermissionFailure(Object.values(registryResult?.failed_reasons || {}));
   const shredHasPermissionFailure = hasPermissionFailure(Object.values(shredResult?.failed_reasons || {}));
   const progressPercent = clampPercent(scanProgress?.percent || 0);
+  const actionsDisabled = loading || scanning || cleaning;
 
   function setFilteredSelection(selected: boolean) {
     setScanResult((current) => {
@@ -407,7 +431,7 @@ function App() {
   }
 
   async function cleanSelectedItems() {
-    if (selectedCleanItems.length === 0) {
+    if (scanning || selectedCleanItems.length === 0) {
       return;
     }
 
@@ -491,14 +515,14 @@ function App() {
   }
 
   async function quarantineSelectedPlugins() {
-    if (selectedPluginItems.length === 0) {
+    if (scanning || selectedPluginItems.length === 0) {
       return;
     }
 
     const summary = [
       `选中插件：${selectedPluginItems.length} 项`,
       `插件目录占用：${formatBytes(selectedPluginSize)}`,
-      '操作方式：移动到 data/quarantine/plugins，可从隔离记录恢复，不直接删除。',
+      '操作方式：移动到 ' + (envInfo.QUARANTINE_DIR || '应用数据目录/quarantine/plugins') + '，可从隔离记录恢复，不直接删除。',
     ];
 
     const confirmed = await requestConfirmation({
@@ -540,6 +564,45 @@ function App() {
         };
       });
 
+      await loadQuarantineRecords();
+      await loadOperationLogs();
+      setError(null);
+    } catch (e: any) {
+      setError(errorMessage(e));
+    } finally {
+      setCleaning(false);
+    }
+  }
+
+  async function restoreQuarantinedPlugin(record: QuarantineRecord) {
+    if (scanning || cleaning || !record.record_id || record.restored_at) {
+      return;
+    }
+
+    const confirmed = await requestConfirmation({
+      title: '确认恢复隔离插件',
+      body: [
+        '恢复插件：' + (record.name || record.record_id),
+        '原始路径：' + record.original_path,
+        '如果原始路径已经存在，后端会拒绝覆盖并展示失败原因。',
+      ],
+      confirmLabel: '确认恢复',
+      cancelLabel: '取消',
+      variant: 'warning',
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setCleaning(true);
+      const result = await RestoreQuarantinedPlugin(record.record_id);
+      const restored = result as unknown as QuarantineResult;
+      setQuarantineResult(restored);
+      setCleanResult(null);
+      setRegistryResult(null);
+      setShredResult(null);
+      await loadQuarantineRecords();
       await loadOperationLogs();
       setError(null);
     } catch (e: any) {
@@ -597,14 +660,14 @@ function App() {
   }
 
   async function deleteSelectedRegistryItems() {
-    if (selectedRegistryItems.length === 0) {
+    if (scanning || selectedRegistryItems.length === 0) {
       return;
     }
 
     const summary = [
       `选中注册表项：${selectedRegistryItems.length} 项`,
       '范围：仅 HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run 中的无效启动项。',
-      '删除前会导出 .reg 备份到 data/registry_backup/。',
+      '删除前会导出 .reg 备份到 ' + (envInfo.REGISTRY_BACKUP_DIR || '应用数据目录/registry_backup') + '。',
     ];
 
     const confirmed = await requestConfirmation({
@@ -670,6 +733,9 @@ function App() {
   }
 
   async function chooseShredFile() {
+    if (scanning) {
+      return;
+    }
     try {
       const path = await SelectShredFile();
       if (path) {
@@ -682,7 +748,7 @@ function App() {
   }
 
   async function shredSelectedFile() {
-    if (!shredPath.trim()) {
+    if (scanning || !shredPath.trim()) {
       return;
     }
 
@@ -754,7 +820,7 @@ function App() {
         <span className={`status-badge ${error ? 'status-error' : 'status-ok'}`}>
           {backendStatus}
         </span>
-        <button className="primary-action" onClick={runScan} disabled={loading || scanning || cleaning}>
+        <button className="primary-action" onClick={runScan} disabled={actionsDisabled}>
           {scanning ? '扫描中...' : '扫描'}
         </button>
       </header>
@@ -828,7 +894,7 @@ function App() {
 
             {ruleWarnings.length > 0 && (
               <section className="notice-panel">
-                <strong>规则警告</strong>
+                <strong>规则问题</strong>
                 <ul>
                   {ruleWarnings.map((warning, idx) => (
                     <li key={idx}>{warning}</li>
@@ -837,10 +903,17 @@ function App() {
               </section>
             )}
 
+            {operationLogError && (
+              <section className="notice-panel" role="alert">
+                <strong>操作日志读取失败</strong>
+                <span>{operationLogError}</span>
+              </section>
+            )}
+
             <section className="env-strip">
               {Object.entries(envInfo).map(([key, value]) => (
                 <div key={key} className="env-item">
-                  <code>%{key}%</code>
+                  <code>{key.endsWith('_DIR') || key.endsWith('_PATH') ? key : `%${key}%`}</code>
                   <span>{value}</span>
                 </div>
               ))}
@@ -870,29 +943,29 @@ function App() {
                 ))}
               </div>
               <div className="toolbar-actions">
-                <button onClick={runRegistryScan} disabled={loading || scanning || cleaning}>
+                <button onClick={runRegistryScan} disabled={actionsDisabled}>
                   {scanning ? '扫描中...' : '扫描注册表'}
                 </button>
                 <button
                   onClick={selectVisibleSafeItems}
-                  disabled={!scanResult || selectableFilteredCount === 0 || selectableFilteredCount === selectedFilteredCount}
+                  disabled={scanning || !scanResult || selectableFilteredCount === 0 || selectableFilteredCount === selectedFilteredCount}
                   title="批量选择会跳过高风险项目"
                 >
                   全选当前筛选
                 </button>
-                <button onClick={clearFilteredSelection} disabled={!scanResult || selectedFilteredAnyCount === 0}>
+                <button onClick={clearFilteredSelection} disabled={scanning || !scanResult || selectedFilteredAnyCount === 0}>
                   取消当前筛选
                 </button>
-                <button onClick={clearSelection} disabled={selectedItems.length === 0}>
+                <button onClick={clearSelection} disabled={scanning || selectedItems.length === 0}>
                   清空选择
                 </button>
-                <button className="warning-action" onClick={quarantineSelectedPlugins} disabled={selectedPluginItems.length === 0 || cleaning}>
+                <button className="warning-action" onClick={quarantineSelectedPlugins} disabled={scanning || selectedPluginItems.length === 0 || cleaning}>
                   {cleaning ? '处理中...' : `隔离插件 ${selectedPluginItems.length}`}
                 </button>
-                <button className="danger-action" onClick={deleteSelectedRegistryItems} disabled={selectedRegistryItems.length === 0 || cleaning}>
+                <button className="danger-action" onClick={deleteSelectedRegistryItems} disabled={scanning || selectedRegistryItems.length === 0 || cleaning}>
                   {cleaning ? '处理中...' : `删除注册表项 ${selectedRegistryItems.length}`}
                 </button>
-                <button className="danger-action" onClick={cleanSelectedItems} disabled={selectedCleanItems.length === 0 || cleaning}>
+                <button className="danger-action" onClick={cleanSelectedItems} disabled={scanning || selectedCleanItems.length === 0 || cleaning}>
                   {cleaning ? '清理中...' : `清理 ${selectedCleanItems.length}`}
                 </button>
               </div>
@@ -904,7 +977,7 @@ function App() {
                 <span>仅手动选择单个普通文件</span>
               </div>
               <div className="shred-controls">
-                <button onClick={chooseShredFile} disabled={cleaning}>选择文件粉碎</button>
+                <button onClick={chooseShredFile} disabled={scanning || cleaning}>选择文件粉碎</button>
                 <input value={shredPath} readOnly placeholder="尚未选择文件" aria-label="待粉碎文件路径" />
                 <label>
                   覆写次数
@@ -914,7 +987,7 @@ function App() {
                     <option value={7}>7</option>
                   </select>
                 </label>
-                <button className="danger-action" onClick={shredSelectedFile} disabled={!shredPath || cleaning}>
+                <button className="danger-action" onClick={shredSelectedFile} disabled={scanning || !shredPath || cleaning}>
                   {cleaning ? '粉碎中...' : '确认粉碎'}
                 </button>
               </div>
@@ -968,6 +1041,36 @@ function App() {
                 )}
               </section>
             )}
+
+            <section className="quarantine-panel">
+              <div className="section-heading inline-heading">
+                <h2>插件隔离记录</h2>
+                <span>{quarantineRecords.length} 条</span>
+              </div>
+              {quarantineRecords.length === 0 ? (
+                <p className="muted-copy">暂无隔离记录。</p>
+              ) : (
+                <ul className="quarantine-list">
+                  {quarantineRecords.map((record) => (
+                    <li key={record.record_id} className="quarantine-record">
+                      <div>
+                        <strong>{record.name || record.record_id}</strong>
+                        <span>{record.browser || '-'} | {formatBytes(record.size)} | {formatTimestamp(record.created_at)}</span>
+                        <code>{record.original_path}</code>
+                        {record.restored_at && <span className="recovery-hint">已恢复：{formatTimestamp(record.restored_at)}</span>}
+                      </div>
+                      <button
+                        className="warning-action"
+                        onClick={() => restoreQuarantinedPlugin(record)}
+                        disabled={scanning || cleaning || !!record.restored_at}
+                      >
+                        {record.restored_at ? '已恢复' : '恢复'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
 
             {registryResult && (
               <section className={resultPanelClass(registryOutcome)} aria-live="polite">
@@ -1072,6 +1175,7 @@ function App() {
                           <input
                             type="checkbox"
                             checked={item.selected}
+                            disabled={scanning}
                             onChange={(event) => setItemSelected(index, event.target.checked)}
                           />
                         </td>
@@ -1124,6 +1228,13 @@ function App() {
                 </table>
               </div>
             </section>
+
+            {scanResult && (scanResult.warnings || []).length > 0 && (
+              <section className="notice-panel" role="alert">
+                <strong>扫描警告</strong>
+                <WarningList warnings={scanResult.warnings} />
+              </section>
+            )}
 
             {scanResult && scanResult.errors.length > 0 && (
               <section className="notice-panel" role="alert">

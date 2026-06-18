@@ -58,6 +58,7 @@ export interface ScanResult {
   total_size: number;
   errors: ScanError[];
   duration_ms: number;
+  warnings?: string[];
 }
 
 export type ScanPhase =

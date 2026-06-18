@@ -58,6 +58,7 @@ func ScanWithOptions(rules []model.CleanRule, options ScanOptions) *model.ScanRe
 			Percent:        progressPercent(i+1, len(rules)),
 		})
 	}
+	result.Items = DeduplicateItems(result.Items)
 
 	// Compute summary totals from the flat item list.
 	for _, item := range result.Items {
@@ -69,6 +70,73 @@ func ScanWithOptions(rules []model.CleanRule, options ScanOptions) *model.ScanRe
 
 	result.Duration = time.Since(start).Milliseconds()
 	return result
+}
+
+// DeduplicateItems collapses repeated scan rows that refer to the same
+// underlying target. This keeps authorization and cleanup one-to-one with the
+// visible result table even when two rules resolve to the same path.
+func DeduplicateItems(items []model.ScanItem) []model.ScanItem {
+	if len(items) < 2 {
+		return items
+	}
+	deduped := make([]model.ScanItem, 0, len(items))
+	seen := make(map[string]int, len(items))
+	for _, item := range items {
+		key := scanItemDedupKey(item)
+		if key == "" {
+			deduped = append(deduped, item)
+			continue
+		}
+		if index, ok := seen[key]; ok {
+			deduped[index] = mergeDuplicateScanItem(deduped[index], item)
+			continue
+		}
+		seen[key] = len(deduped)
+		deduped = append(deduped, item)
+	}
+	return deduped
+}
+
+func scanItemDedupKey(item model.ScanItem) string {
+	path := strings.TrimSpace(item.Path)
+	if path == "" {
+		return ""
+	}
+	return item.Type + "\x00" + strings.ToLower(filepath.Clean(path))
+}
+
+func mergeDuplicateScanItem(current, next model.ScanItem) model.ScanItem {
+	if riskRank(next.Risk) > riskRank(current.Risk) {
+		current.Risk = next.Risk
+	}
+	current.Selected = current.Selected && next.Selected && current.Risk != model.RiskHigh
+	if current.Size == 0 {
+		current.Size = next.Size
+	}
+	if next.LastModified > current.LastModified {
+		current.LastModified = next.LastModified
+	}
+	if next.Source != "" && !strings.Contains(current.Source, next.Source) {
+		if current.Source == "" {
+			current.Source = next.Source
+		} else {
+			current.Source += ", " + next.Source
+		}
+	}
+	return current
+}
+
+func riskRank(risk string) int {
+	switch risk {
+	case model.RiskHigh:
+		return 3
+	case model.RiskMedium:
+		return 2
+	case model.RiskLow:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // ── Single-rule scanning ─────────────────────────────────────────────────

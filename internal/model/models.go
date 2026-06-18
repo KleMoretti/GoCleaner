@@ -171,6 +171,7 @@ type ScanResult struct {
 	TotalSize  int64       `json:"total_size"`  // Total bytes across all files
 	Errors     []ScanError `json:"errors"`      // Paths that failed during scanning
 	Duration   int64       `json:"duration_ms"` // Scan duration in milliseconds
+	Warnings   []string    `json:"warnings,omitempty"`
 }
 
 // ScanProgress describes coarse-grained scan progress for UI feedback.

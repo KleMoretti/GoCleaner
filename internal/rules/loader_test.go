@@ -771,7 +771,7 @@ func TestLoadFromFile_IMUnsafeLeafEmptyPatterns(t *testing.T) {
 	}
 }
 
-// ── IM non-safe leaf with explicit patterns → warning ─────────────────
+// ── IM non-safe leaf with explicit patterns → fatal ───────────────────
 
 func TestLoadFromFile_IMUnsafeLeafWithPatterns(t *testing.T) {
 	json := `[{
@@ -790,13 +790,10 @@ func TestLoadFromFile_IMUnsafeLeafWithPatterns(t *testing.T) {
 		t.Fatalf("LoadFromFile() unexpected error: %v", err)
 	}
 
-	// With explicit patterns, the rule should load (warning, not error)
-	if len(result.Rules) != 1 {
-		t.Fatalf("预期规则被加载（仅警告），实际被跳过。Errors: %v", result.Errors)
+	if len(result.Rules) != 0 {
+		t.Fatalf("非安全 IM 目录即使指定 patterns 也应被拒绝，实际加载 %d 条", len(result.Rules))
 	}
-	if len(result.Warnings) == 0 {
-		t.Log("注意：显式 patterns 下预期有警告，但未触发")
-	} else {
-		t.Logf("IM 警告: %v", result.Warnings[0])
+	if len(result.Errors) == 0 {
+		t.Fatal("预期至少 1 个致命错误")
 	}
 }

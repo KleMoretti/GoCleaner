@@ -24,7 +24,9 @@ dist/
 .tmp/
 
 # ── Frontend / Node ───────────────────────────────────
-frontend/dist/
+frontend/dist/*
+!frontend/dist/
+!frontend/dist/.gitkeep
 frontend/node_modules/
 node_modules/
 npm-debug.log*
