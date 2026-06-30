@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,31 +33,31 @@ func New(path string) *Store {
 
 func (s *Store) Append(entry model.OperationLog) error {
 	if s == nil {
-		return errors.New("logger store is nil")
+		return errors.New("日志存储未初始化")
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
+		return fmt.Errorf("创建日志目录失败: %w", err)
 	}
 
 	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("打开操作日志失败: %w", err)
 	}
 	defer file.Close()
 
 	encoded, err := json.Marshal(entry)
 	if err != nil {
-		return err
+		return fmt.Errorf("编码操作日志失败: %w", err)
 	}
 	if _, err := file.Write(append(encoded, '\n')); err != nil {
-		return err
+		return fmt.Errorf("写入操作日志失败: %w", err)
 	}
 	return nil
 }
 
 func (s *Store) ReadRecent(limit int) ([]model.OperationLog, error) {
 	if s == nil {
-		return nil, errors.New("logger store is nil")
+		return nil, errors.New("日志存储未初始化")
 	}
 	if limit <= 0 {
 		return []model.OperationLog{}, nil
@@ -67,7 +68,7 @@ func (s *Store) ReadRecent(limit int) ([]model.OperationLog, error) {
 		if os.IsNotExist(err) {
 			return []model.OperationLog{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("打开操作日志失败: %w", err)
 	}
 	defer file.Close()
 
@@ -87,7 +88,7 @@ func (s *Store) ReadRecent(limit int) ([]model.OperationLog, error) {
 		entries = append(entries, entry)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("读取操作日志失败: %w", err)
 	}
 
 	reverse(entries)

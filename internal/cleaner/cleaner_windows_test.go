@@ -47,8 +47,8 @@ func TestCleanSkipsLockedFileAndRecordsReason(t *testing.T) {
 		t.Fatalf("FailedFiles = %v, want [%s]", result.FailedFiles, path)
 	}
 	reason := strings.ToLower(result.FailedReasons[path])
-	if !strings.Contains(reason, "locked") && !strings.Contains(reason, "in use") {
-		t.Fatalf("failure reason = %q, want locked or in use", result.FailedReasons[path])
+	if !strings.Contains(reason, "占用") {
+		t.Fatalf("failure reason = %q, want 文件被占用", result.FailedReasons[path])
 	}
 	if _, statErr := os.Stat(path); statErr != nil {
 		t.Fatalf("locked file should remain: %v", statErr)

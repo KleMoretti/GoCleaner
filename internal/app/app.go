@@ -255,7 +255,7 @@ func (a *App) DeleteRegistryItems(items []model.ScanItem, confirmed bool) (*mode
 // SelectShredFile opens a native file picker for the explicit shred workflow.
 func (a *App) SelectShredFile() (string, error) {
 	if a.ctx == nil {
-		return "", fmt.Errorf("Wails context is not ready")
+		return "", fmt.Errorf("Wails 上下文尚未就绪")
 	}
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "选择要粉碎的文件",
@@ -285,7 +285,7 @@ func (a *App) GetOperationLogs(limit int) ([]model.OperationLog, error) {
 
 // Ping is a health-check method to verify the Go backend is reachable.
 func (a *App) Ping() string {
-	return "GoCleaner backend is running"
+	return "GoCleaner 后端运行中"
 }
 
 // GetEnvInfo returns the expanded values of common Windows environment
@@ -439,14 +439,14 @@ func (a *App) authorizeSelectedItems(items []model.ScanItem, requiredType string
 		if !ok {
 			rejected = append(rejected, authorizationFailure{
 				Path:   failurePath(request),
-				Reason: "item was not produced by latest scan; run scan again before cleaning",
+				Reason: "项目不是最新扫描结果产生，请重新扫描后再清理",
 			})
 			continue
 		}
 		if stored.Type != requiredType {
 			rejected = append(rejected, authorizationFailure{
 				Path:   failurePath(request),
-				Reason: fmt.Sprintf("item type %s is not allowed for this operation", stored.Type),
+				Reason: fmt.Sprintf("项目类型 %s 不允许用于当前操作", stored.Type),
 			})
 			continue
 		}
@@ -463,7 +463,7 @@ func failurePath(item model.ScanItem) string {
 	if item.ID != "" {
 		return item.ID
 	}
-	return "<unknown item>"
+	return "<未知项目>"
 }
 
 func addCleanFailures(result *model.CleanResult, failures []authorizationFailure) {
@@ -474,7 +474,7 @@ func addCleanFailures(result *model.CleanResult, failures []authorizationFailure
 }
 
 func refreshCleanMessage(result *model.CleanResult) {
-	result.Message = fmt.Sprintf("Deleted %d file(s), freed %d byte(s), failed %d item(s).",
+	result.Message = fmt.Sprintf("已删除 %d 个文件，释放 %d 字节，失败 %d 项。",
 		result.DeletedFiles,
 		result.FreedSize,
 		len(result.FailedFiles),
@@ -489,7 +489,7 @@ func addQuarantineFailures(result *model.QuarantineResult, failures []authorizat
 }
 
 func refreshQuarantineMessage(result *model.QuarantineResult) {
-	result.Message = fmt.Sprintf("Moved %d plugin(s) to quarantine, restored %d plugin(s), failed %d item(s).",
+	result.Message = fmt.Sprintf("已隔离 %d 个插件，已恢复 %d 个插件，失败 %d 项。",
 		result.MovedItems,
 		result.RestoredItems,
 		len(result.FailedItems),
@@ -504,7 +504,7 @@ func addRegistryFailures(result *model.RegistryActionResult, failures []authoriz
 }
 
 func refreshRegistryMessage(result *model.RegistryActionResult) {
-	result.Message = fmt.Sprintf("Deleted %d registry value(s), backup: %s, failed %d item(s).",
+	result.Message = fmt.Sprintf("已删除 %d 个注册表值，备份：%s，失败 %d 项。",
 		result.DeletedValues,
 		result.BackupPath,
 		len(result.FailedItems),
@@ -532,7 +532,7 @@ func addShredWarning(result *model.ShredResult, err error) {
 }
 
 func logWarning(err error) string {
-	return "operation completed but operation log was not recorded: " + err.Error()
+	return "操作已完成，但操作日志未记录：" + err.Error()
 }
 
 func recalculateScanSummary(result *model.ScanResult) {

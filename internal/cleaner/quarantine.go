@@ -50,7 +50,7 @@ func (s *QuarantineStore) QuarantinePlugins(items []model.ScanItem) (*model.Quar
 		result.MovedItems++
 	}
 
-	result.Message = fmt.Sprintf("Moved %d plugin(s) to quarantine, failed %d item(s).",
+	result.Message = fmt.Sprintf("已隔离 %d 个插件，失败 %d 项。",
 		result.MovedItems,
 		len(result.FailedItems),
 	)
@@ -61,7 +61,7 @@ func (s *QuarantineStore) QuarantinePlugins(items []model.ScanItem) (*model.Quar
 func (s *QuarantineStore) ListRecords() ([]model.QuarantineRecord, error) {
 	records, err := s.readRecords()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("读取隔离记录失败: %w", err)
 	}
 	sortRecordsNewestFirst(records)
 	return records, nil
@@ -72,14 +72,14 @@ func (s *QuarantineStore) RestorePlugin(recordID string) (*model.QuarantineResul
 	result := newQuarantineResult()
 	recordID = strings.TrimSpace(recordID)
 	if recordID == "" {
-		recordQuarantineFailure(result, recordID, "empty quarantine record id")
-		result.Message = "Restore failed: empty quarantine record id."
+		recordQuarantineFailure(result, recordID, "隔离记录 ID 为空")
+		result.Message = "恢复失败：隔离记录 ID 为空。"
 		return result, nil
 	}
 
 	records, err := s.readRecords()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("读取隔离记录失败: %w", err)
 	}
 	index := -1
 	for i := range records {
@@ -89,82 +89,82 @@ func (s *QuarantineStore) RestorePlugin(recordID string) (*model.QuarantineResul
 		}
 	}
 	if index < 0 {
-		recordQuarantineFailure(result, recordID, "quarantine record not found")
-		result.Message = "Restore failed: quarantine record not found."
+		recordQuarantineFailure(result, recordID, "未找到隔离记录")
+		result.Message = "恢复失败：未找到隔离记录。"
 		return result, nil
 	}
 	record := records[index]
 	if strings.TrimSpace(record.RestoredAt) != "" {
-		recordQuarantineFailure(result, record.OriginalPath, "quarantine record already restored")
-		result.Message = "Restore failed: quarantine record already restored."
+		recordQuarantineFailure(result, record.OriginalPath, "隔离记录已恢复")
+		result.Message = "恢复失败：隔离记录已恢复。"
 		return result, nil
 	}
 	if _, err := os.Stat(record.OriginalPath); err == nil {
-		recordQuarantineFailure(result, record.OriginalPath, "original path already exists")
-		result.Message = "Restore failed: original path already exists."
+		recordQuarantineFailure(result, record.OriginalPath, "原始路径已存在")
+		result.Message = "恢复失败：原始路径已存在。"
 		return result, nil
 	}
 	if _, err := os.Stat(record.QuarantinePath); err != nil {
-		recordQuarantineFailure(result, record.QuarantinePath, "quarantined content missing: "+err.Error())
-		result.Message = "Restore failed: quarantined content missing."
+		recordQuarantineFailure(result, record.QuarantinePath, "隔离内容缺失："+err.Error())
+		result.Message = "恢复失败：隔离内容缺失。"
 		return result, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(record.OriginalPath), 0o755); err != nil {
-		recordQuarantineFailure(result, record.OriginalPath, "create original parent failed: "+err.Error())
-		result.Message = "Restore failed: cannot create original parent."
+		recordQuarantineFailure(result, record.OriginalPath, "创建原始父目录失败："+err.Error())
+		result.Message = "恢复失败：无法创建原始父目录。"
 		return result, nil
 	}
 	if err := movePath(record.QuarantinePath, record.OriginalPath); err != nil {
-		recordQuarantineFailure(result, record.OriginalPath, "restore move failed: "+err.Error())
-		result.Message = "Restore failed: move failed."
+		recordQuarantineFailure(result, record.OriginalPath, "恢复移动失败："+err.Error())
+		result.Message = "恢复失败：移动失败。"
 		return result, nil
 	}
 
 	records[index].RestoredAt = time.Now().Format(time.RFC3339)
 	if err := s.writeRecords(records); err != nil {
 		if rollbackErr := movePath(record.OriginalPath, record.QuarantinePath); rollbackErr != nil {
-			return result, fmt.Errorf("write restore record failed: %w; rollback failed: %v", err, rollbackErr)
+			return result, fmt.Errorf("写入恢复记录失败: %w；回滚失败：%v", err, rollbackErr)
 		}
-		return result, err
+		return result, fmt.Errorf("写入恢复记录失败: %w", err)
 	}
 
 	result.RestoredItems = 1
-	result.Message = "Restored 1 plugin from quarantine."
+	result.Message = "已从隔离区恢复 1 个插件。"
 	return result, nil
 }
 
 func (s *QuarantineStore) quarantinePlugin(item model.ScanItem) error {
 	if item.Type != model.TypePlugin {
-		return fmt.Errorf("unsupported item type for plugin quarantine: %s", item.Type)
+		return fmt.Errorf("不支持的隔离项目类型：%s，仅支持插件项", item.Type)
 	}
 	if strings.TrimSpace(item.Path) == "" {
-		return fmt.Errorf("empty path")
+		return fmt.Errorf("路径为空")
 	}
 	info, err := os.Lstat(item.Path)
 	if err != nil {
-		return fmt.Errorf("plugin path not accessible: %w", err)
+		return fmt.Errorf("插件路径不可访问: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("symbolic link skipped")
+		return fmt.Errorf("已跳过符号链接")
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("plugin item is not a directory")
+		return fmt.Errorf("插件项目不是目录")
 	}
 	if !isBrowserExtensionRoot(item.Path) {
-		return fmt.Errorf("plugin quarantine only supports browser Extensions directories")
+		return fmt.Errorf("插件隔离仅支持浏览器 Extensions 目录")
 	}
 	if !hasPluginManifest(item.Path) {
-		return fmt.Errorf("plugin manifest not found under extension directory")
+		return fmt.Errorf("插件目录下未找到 manifest.json")
 	}
 
 	recordID := quarantineRecordID(item.Path)
 	recordDir := filepath.Join(s.root, recordID)
 	contentPath := filepath.Join(recordDir, "content")
 	if err := os.MkdirAll(recordDir, 0o755); err != nil {
-		return fmt.Errorf("create quarantine directory failed: %w", err)
+		return fmt.Errorf("创建隔离目录失败: %w", err)
 	}
 	if _, err := os.Stat(contentPath); err == nil {
-		return fmt.Errorf("quarantine target already exists")
+		return fmt.Errorf("隔离目标已存在")
 	}
 
 	size := quarantineDirectorySize(item.Path)
@@ -181,14 +181,14 @@ func (s *QuarantineStore) quarantinePlugin(item model.ScanItem) error {
 		record.Browser = item.Plugin.Browser
 	}
 	if err := s.appendRecord(record); err != nil {
-		return fmt.Errorf("write quarantine record failed: %w", err)
+		return fmt.Errorf("写入隔离记录失败: %w", err)
 	}
 	if err := movePath(item.Path, contentPath); err != nil {
 		if cleanupErr := s.removeRecord(recordID); cleanupErr != nil {
-			return fmt.Errorf("move to quarantine failed: %w; cleanup record failed: %v", err, cleanupErr)
+			return fmt.Errorf("移动到隔离区失败: %w；清理记录失败：%v", err, cleanupErr)
 		}
 		_ = os.Remove(recordDir)
-		return fmt.Errorf("move to quarantine failed: %w", err)
+		return fmt.Errorf("移动到隔离区失败: %w", err)
 	}
 
 	return nil
@@ -354,10 +354,10 @@ func copyDir(src, dst string) error {
 		return err
 	}
 	if srcInfo.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("symbolic link skipped")
+		return fmt.Errorf("已跳过符号链接")
 	}
 	if !srcInfo.IsDir() {
-		return fmt.Errorf("source is not a directory")
+		return fmt.Errorf("源路径不是目录")
 	}
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -373,7 +373,7 @@ func copyDir(src, dst string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symbolic link skipped: %s", path)
+			return fmt.Errorf("已跳过符号链接：%s", path)
 		}
 		if d.IsDir() {
 			return os.MkdirAll(target, info.Mode().Perm())

@@ -11,7 +11,7 @@ import (
 	"gocleaner/internal/model"
 )
 
-var ErrHighRiskConfirmationRequired = errors.New("high-risk confirmation required")
+var ErrHighRiskConfirmationRequired = errors.New("高风险操作需要确认")
 
 type Options struct {
 	HighRiskConfirmed bool
@@ -25,7 +25,7 @@ func Clean(items []model.ScanItem, options Options) (*model.CleanResult, error) 
 
 	selected := selectedItems(items)
 	if containsHighRisk(selected) && !options.HighRiskConfirmed {
-		result.Message = "High-risk items require explicit confirmation before cleaning."
+		result.Message = "高风险项目需要明确确认后才能清理。"
 		return result, ErrHighRiskConfirmationRequired
 	}
 
@@ -33,7 +33,7 @@ func Clean(items []model.ScanItem, options Options) (*model.CleanResult, error) 
 		cleanItem(item, result)
 	}
 
-	result.Message = fmt.Sprintf("Deleted %d file(s), freed %d byte(s), failed %d item(s).",
+	result.Message = fmt.Sprintf("已删除 %d 个文件，释放 %d 字节，失败 %d 项。",
 		result.DeletedFiles,
 		result.FreedSize,
 		len(result.FailedFiles),
@@ -78,18 +78,18 @@ func containsHighRisk(items []model.ScanItem) bool {
 
 func cleanItem(item model.ScanItem, result *model.CleanResult) {
 	if item.Type != model.TypeFile {
-		recordFailure(result, item.Path, fmt.Sprintf("unsupported item type: %s", item.Type))
+		recordFailure(result, item.Path, fmt.Sprintf("不支持的项目类型：%s", item.Type))
 		return
 	}
 	if strings.TrimSpace(item.Path) == "" {
-		recordFailure(result, item.Path, "empty path")
+		recordFailure(result, item.Path, "路径为空")
 		return
 	}
 
 	info, err := os.Lstat(item.Path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			recordFailure(result, item.Path, "not found")
+			recordFailure(result, item.Path, "路径不存在")
 			return
 		}
 		recordFailure(result, item.Path, classifyAccessError(err))
@@ -97,11 +97,11 @@ func cleanItem(item model.ScanItem, result *model.CleanResult) {
 	}
 
 	if info.Mode()&os.ModeSymlink != 0 {
-		recordFailure(result, item.Path, "symbolic link skipped")
+		recordFailure(result, item.Path, "已跳过符号链接")
 		return
 	}
 	if !info.Mode().IsRegular() {
-		recordFailure(result, item.Path, "not a regular file")
+		recordFailure(result, item.Path, "不是普通文件")
 		return
 	}
 
@@ -129,11 +129,11 @@ func classifyAccessError(err error) string {
 		strings.Contains(lower, "process cannot access"),
 		strings.Contains(lower, "sharing violation"),
 		strings.Contains(lower, "file is locked"):
-		return "file locked or in use: " + message
+		return "文件被占用，无法删除"
 	case strings.Contains(lower, "access is denied"),
 		strings.Contains(lower, "permission denied"):
-		return "permission denied: " + message
+		return "权限不足，无法删除"
 	default:
-		return "delete failed: " + message
+		return "删除失败：" + message
 	}
 }

@@ -19,14 +19,14 @@ import (
 
 const RunKeyPath = `Software\Microsoft\Windows\CurrentVersion\Run`
 
-var ErrRegistryConfirmationRequired = errors.New("registry delete confirmation required")
+var ErrRegistryConfirmationRequired = errors.New("注册表删除需要确认")
 
 // ScanInvalidStartup scans only HKCU Run values and returns invalid startup targets.
 func ScanInvalidStartup() (*model.ScanResult, error) {
 	start := time.Now()
 	values, err := windows.ReadHKCUValues(RunKeyPath)
 	if err != nil {
-		return nil, fmt.Errorf("read HKCU startup values: %w", err)
+		return nil, fmt.Errorf("读取 HKCU 启动项失败: %w", err)
 	}
 
 	return newInvalidStartupScanResult(values, fileExists, time.Since(start).Milliseconds()), nil
@@ -151,46 +151,46 @@ func DeleteRegistryItemsWithBackupDir(items []model.ScanItem, confirmed bool, ba
 	result := newRegistryActionResult()
 	selected := selectedRegistryItems(items)
 	if len(selected) == 0 {
-		result.Message = "No registry values selected."
+		result.Message = "未选择任何注册表项。"
 		return result, nil
 	}
 	if !confirmed {
-		result.Message = "Registry deletion requires explicit confirmation."
+		result.Message = "注册表删除需要明确确认。"
 		return result, ErrRegistryConfirmationRequired
 	}
 
 	supported := make([]model.ScanItem, 0, len(selected))
 	for _, item := range selected {
 		if item.Type != model.TypeRegistry || item.Registry == nil || item.Registry.Hive != "HKCU" || item.Registry.KeyPath != RunKeyPath {
-			recordRegistryFailure(result, item.Path, "unsupported registry target")
+			recordRegistryFailure(result, item.Path, "不支持的注册表目标")
 			continue
 		}
 		supported = append(supported, item)
 	}
 	if len(supported) == 0 {
-		result.Message = "No supported HKCU Run registry values selected."
+		result.Message = "未选择受支持的 HKCU Run 注册表项。"
 		return result, nil
 	}
 
 	backupPath := registryBackupPath(backupDir, time.Now())
 	if err := WriteRegistryBackup(backupPath, supported); err != nil {
 		for _, item := range supported {
-			recordRegistryFailure(result, item.Path, "registry backup failed: "+err.Error())
+			recordRegistryFailure(result, item.Path, "注册表备份失败："+err.Error())
 		}
-		result.Message = "Registry backup failed; no values were deleted."
+		result.Message = "注册表备份失败，未删除任何值。"
 		return result, nil
 	}
 	result.BackupPath = backupPath
 
 	for _, item := range supported {
 		if err := windows.DeleteHKCUValue(item.Registry.KeyPath, item.Registry.ValueName); err != nil {
-			recordRegistryFailure(result, item.Path, "delete registry value failed: "+err.Error())
+			recordRegistryFailure(result, item.Path, "删除注册表值失败："+err.Error())
 			continue
 		}
 		result.DeletedValues++
 	}
 
-	result.Message = fmt.Sprintf("Deleted %d registry value(s), backup: %s, failed %d item(s).",
+	result.Message = fmt.Sprintf("已删除 %d 个注册表值，备份：%s，失败 %d 项。",
 		result.DeletedValues,
 		result.BackupPath,
 		len(result.FailedItems),
@@ -233,7 +233,7 @@ func DefaultBackupDir() string {
 // WriteRegistryBackup writes a .reg backup for selected registry values.
 func WriteRegistryBackup(path string, items []model.ScanItem) error {
 	if strings.TrimSpace(path) == "" {
-		return fmt.Errorf("empty backup path")
+		return fmt.Errorf("备份路径为空")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

@@ -10,7 +10,7 @@ const (
 	RegistryDWord        = "REG_DWORD"
 )
 
-var ErrRegistryUnsupported = errors.New("Windows registry is not supported on this platform")
+var ErrRegistryUnsupported = errors.New("当前平台不支持 Windows 注册表")
 
 // RegistryValue is a simplified representation of a Windows registry value.
 type RegistryValue struct {

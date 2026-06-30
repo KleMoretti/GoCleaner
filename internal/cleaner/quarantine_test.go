@@ -192,7 +192,7 @@ func TestQuarantinePluginsRejectsNonPluginItem(t *testing.T) {
 	if len(result.FailedItems) != 1 {
 		t.Fatalf("FailedItems = %+v, want one failure", result.FailedItems)
 	}
-	if !strings.Contains(result.FailedReasons[filePath], "plugin") {
+	if !strings.Contains(result.FailedReasons[filePath], "插件") {
 		t.Fatalf("failure reason = %q, want plugin type rejection", result.FailedReasons[filePath])
 	}
 	if _, statErr := os.Stat(filePath); statErr != nil {

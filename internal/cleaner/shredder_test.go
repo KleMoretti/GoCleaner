@@ -54,7 +54,7 @@ func TestShredFileRejectsInvalidPassesAndDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid passes should be reported in result, not returned as fatal error: %v", err)
 	}
-	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[path], "passes") {
+	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[path], "粉碎次数") {
 		t.Fatalf("invalid passes result = %+v", result)
 	}
 
@@ -62,7 +62,7 @@ func TestShredFileRejectsInvalidPassesAndDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("directory failure should be reported in result, not returned as fatal error: %v", err)
 	}
-	if len(result.FailedFiles) != 1 || !strings.Contains(strings.ToLower(result.FailedReasons[dir]), "directory") {
+	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[dir], "目录") {
 		t.Fatalf("directory failure result = %+v", result)
 	}
 }
@@ -75,7 +75,7 @@ func TestShredFileRejectsMissingFilesAndSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing file should be reported in result, not returned as fatal error: %v", err)
 	}
-	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[missing], "not found") {
+	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[missing], "路径不存在") {
 		t.Fatalf("missing file result = %+v", result)
 	}
 
@@ -89,7 +89,7 @@ func TestShredFileRejectsMissingFilesAndSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("symlink should be reported in result, not returned as fatal error: %v", err)
 	}
-	if len(result.FailedFiles) != 1 || !strings.Contains(strings.ToLower(result.FailedReasons[link]), "symbolic link") {
+	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[link], "符号链接") {
 		t.Fatalf("symlink failure result = %+v", result)
 	}
 	if _, statErr := os.Stat(target); statErr != nil {

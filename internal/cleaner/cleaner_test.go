@@ -144,8 +144,8 @@ func TestCleanRecordsMissingFileFailure(t *testing.T) {
 		t.Fatalf("FailedFiles = %v, want [%s]", result.FailedFiles, path)
 	}
 	reason := strings.ToLower(result.FailedReasons[path])
-	if !strings.Contains(reason, "not found") {
-		t.Fatalf("failure reason = %q, want not found", result.FailedReasons[path])
+	if !strings.Contains(reason, "路径不存在") {
+		t.Fatalf("failure reason = %q, want 路径不存在", result.FailedReasons[path])
 	}
 }
 

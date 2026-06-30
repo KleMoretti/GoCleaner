@@ -93,7 +93,7 @@ func TestAppCleanRejectsItemsNotProducedByLatestScan(t *testing.T) {
 	if result.DeletedFiles != 0 {
 		t.Fatalf("DeletedFiles = %d, want 0 for unscanned item", result.DeletedFiles)
 	}
-	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[path], "latest scan") {
+	if len(result.FailedFiles) != 1 || !strings.Contains(result.FailedReasons[path], "最新扫描") {
 		t.Fatalf("unauthorized clean result = %+v", result)
 	}
 	if _, statErr := os.Stat(path); statErr != nil {

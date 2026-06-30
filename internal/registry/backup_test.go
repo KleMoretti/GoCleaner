@@ -137,7 +137,7 @@ func TestDeleteRegistryItemsWithBackupFailureStopsBeforeDelete(t *testing.T) {
 	if result.BackupPath != "" {
 		t.Fatalf("BackupPath = %q, want empty on failed backup", result.BackupPath)
 	}
-	if len(result.FailedItems) != 1 || !strings.Contains(result.FailedReasons[item.Path], "registry backup failed") {
+	if len(result.FailedItems) != 1 || !strings.Contains(result.FailedReasons[item.Path], "注册表备份失败") {
 		t.Fatalf("backup failure result = %+v", result)
 	}
 }
